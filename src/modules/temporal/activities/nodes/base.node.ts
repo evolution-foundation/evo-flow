@@ -1,0 +1,213 @@
+import { log } from '@temporalio/activity';
+import { CustomLoggerService } from 'src/common/services/custom-logger.service';
+import {
+  VariableInterpolationUtil,
+  VariableContext,
+} from '../utils/variable-interpolation.util';
+
+export interface NodeExecutionResult {
+  success: boolean;
+  nextNodeId?: string;
+  error?: string;
+  variables?: Record<string, any>;
+  executionTime?: number;
+  shouldPause?: boolean; // For wait nodes to signal workflow pause
+  waitId?: string; // For wait nodes to provide wait ID
+  metadata?: Record<string, any>; // For passing additional data to workflow
+}
+
+export abstract class BaseNode {
+  protected readonly logger = new CustomLoggerService(this.constructor.name);
+
+  constructor(protected readonly nodeType: string) {}
+
+  abstract execute(input: any): Promise<NodeExecutionResult>;
+
+  protected async initializeDatabase() {
+    const { AppDataSource } = await import('../../../../database/ormconfig');
+
+    if (!AppDataSource.isInitialized) {
+      await AppDataSource.initialize();
+    }
+
+    return AppDataSource;
+  }
+
+  protected logNodeStart(nodeId: string, input: any): void {
+    // log.info(`Executing ${this.nodeType} node`, {
+    //   nodeId,
+    //   nodeType: this.nodeType,
+    //   contactId: input.contactId,
+    //
+    //   sessionId: input.sessionId,
+    // });
+  }
+
+  protected logNodeSuccess(
+    nodeId: string,
+    input: any,
+    executionTime: number,
+  ): void {
+    // log.info(`${this.nodeType} node executed successfully`, {
+    //   nodeId,
+    //   nodeType: this.nodeType,
+    //   contactId: input.contactId,
+    //
+    //   executionTime,
+    // });
+  }
+
+  protected logNodeError(
+    nodeId: string,
+    input: any,
+    error: Error,
+    executionTime: number,
+  ): void {
+    log.error(`Failed to execute ${this.nodeType} node`, {
+      nodeId,
+      nodeType: this.nodeType,
+      contactId: input.contactId,
+      error: error.message,
+      executionTime,
+    });
+  }
+
+  protected createSuccessResult(
+    input: any,
+    executionTime: number,
+    additionalVariables: Record<string, any> = {},
+  ): NodeExecutionResult {
+    const nodeId = input.nodeId;
+    const baseVariables = {
+      [`node_${nodeId}_executed`]: true,
+      [`node_${nodeId}_execution_time`]: executionTime,
+      [`node_${nodeId}_timestamp`]: new Date().toISOString(),
+    };
+
+    // Only specific node types should force a specific nextNodeId
+    // Most nodes should let the workflow use edge navigation
+    const nodeTypesToForceNextNode = [
+      'exit-journey-node', 
+      'transfer-journey-node',
+      'conditional-node', // Conditional nodes may need to specify which branch to take
+      'wait-node' // Wait nodes may need to specify fallback or completion routes
+    ];
+    
+    const shouldForceNextNode = nodeTypesToForceNextNode.includes(this.nodeType);
+    const finalNextNodeId = shouldForceNextNode ? input.nodeData?.nextNodeId : undefined;
+    
+    // log.info('🔍 DEBUG: BaseNode.createSuccessResult', {
+    //   nodeId: input.nodeId,
+    //   nodeType: this.nodeType,
+    //   inputNextNodeId: input.nodeData?.nextNodeId,
+    //   shouldForceNextNode,
+    //   finalNextNodeId,
+    //   nodeTypesToForceNextNode,
+    // });
+
+    return {
+      success: true,
+      nextNodeId: finalNextNodeId,
+      executionTime,
+      variables: {
+        ...baseVariables,
+        ...additionalVariables,
+      },
+    };
+  }
+
+  protected createErrorResult(
+    error: Error,
+    executionTime: number,
+  ): NodeExecutionResult {
+    return {
+      success: false,
+      error: `Failed to execute ${this.nodeType}: ${error.message}`,
+      executionTime,
+    };
+  }
+
+  protected async executeWithTiming<T>(
+    nodeId: string,
+    input: any,
+    operation: () => Promise<T>,
+  ): Promise<{ result: T; executionTime: number }> {
+    const startTime = Date.now();
+
+    try {
+      this.logNodeStart(nodeId, input);
+      const result = await operation();
+      const executionTime = Date.now() - startTime;
+      this.logNodeSuccess(nodeId, input, executionTime);
+
+      return { result, executionTime };
+    } catch (error) {
+      const executionTime = Date.now() - startTime;
+      this.logNodeError(nodeId, input, error as Error, executionTime);
+      throw error;
+    }
+  }
+
+  /**
+   * Interpolates variables in node data using session and workflow variables
+   */
+  protected async interpolateNodeData(input: any, nodeData: any): Promise<any> {
+    try {
+      // Try cache first, then fallback to database
+      const { journeyExecutionActivities } = await import('../journey-execution.activities');
+      let session = await journeyExecutionActivities.getSessionFromCache(
+        input.sessionId,
+      );
+
+      // If not in cache, load from database
+      if (!session) {
+        const dataSource = await this.initializeDatabase();
+        const { JourneySession } = await import(
+          '../../../journeys/entities/journey-session.entity'
+        );
+        const sessionRepository = dataSource.getRepository(JourneySession);
+
+        session = await sessionRepository.findOne({
+          where: { id: input.sessionId },
+          relations: ['journey'],
+        });
+      }
+
+      if (!session) {
+        // log.warn('Session not found for variable interpolation', {
+        //   sessionId: input.sessionId,
+        //   triedCache: !!input.accountId,
+        // });
+        return nodeData;
+      }
+
+      // Load journey variables
+      const dataSource = await this.initializeDatabase();
+      const { Journey } = await import(
+        '../../../journeys/entities/journey.entity'
+      );
+      const journeyRepository = dataSource.getRepository(Journey);
+      const journey = await journeyRepository.findOne({
+        where: { id: input.journeyId },
+      });
+
+      const context: VariableContext = {
+        sessionVariables: session.variables || {},
+        workflowVariables: input.workflowState?.variables || {},
+        variables: journey?.variables || [],
+        contactId: input.contactId,
+        sessionId: input.sessionId,
+        timestamp: new Date().toISOString(),
+      };
+
+      // Interpolate the node data
+      return VariableInterpolationUtil.interpolateVariables(nodeData, context);
+    } catch (error) {
+      // log.warn('Failed to interpolate variables, using original data', {
+      //   nodeId: input.nodeId,
+      //   error: error.message,
+      // });
+      return nodeData;
+    }
+  }
+}

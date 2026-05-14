@@ -1,0 +1,542 @@
+import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
+import { EventEmitter2 } from '@nestjs/event-emitter';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import Redis from 'ioredis';
+import { LRUCache } from 'lru-cache';
+import { Segment } from '../entities/segment.entity';
+import { getProcessingConfig } from '../../processing/config/processing.config';
+
+export interface CachedSegment {
+  id: string;
+  accountId: string;
+  name: string;
+  definition: any;
+  status: string;
+  contactsCount?: number;
+  lastComputedAt?: Date;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface SegmentCacheStats {
+  l1CacheHits: number;
+  l1CacheMisses: number;
+  l2CacheHits: number;
+  l2CacheMisses: number;
+  databaseHits: number;
+  totalRequests: number;
+  l1CacheSize: number;
+  l2CacheSize: number;
+  hitRatePercent: number;
+}
+
+/**
+ * Segment Cache Service
+ * Implements 2-layer caching strategy: Redis L1 + Memory L2
+ * Following SEGMENT_IMPLEMENTATION_TIMELINE.md requirements
+ */
+@Injectable()
+export class SegmentCacheService implements OnModuleDestroy {
+  private readonly logger = new CustomLoggerService(SegmentCacheService.name);
+  private readonly config = getProcessingConfig();
+
+  // Redis L1 cache - shared across instances
+  private redis: Redis;
+
+  // Memory L2 cache - local to instance, most used segments
+  private memoryCache: LRUCache<string, CachedSegment>;
+
+  // Cache statistics
+  private stats: SegmentCacheStats = {
+    l1CacheHits: 0,
+    l1CacheMisses: 0,
+    l2CacheHits: 0,
+    l2CacheMisses: 0,
+    databaseHits: 0,
+    totalRequests: 0,
+    l1CacheSize: 0,
+    l2CacheSize: 0,
+    hitRatePercent: 0,
+  };
+
+  constructor(
+    @InjectRepository(Segment)
+    private segmentRepository: Repository<Segment>,
+    private eventEmitter: EventEmitter2,
+  ) {
+    this.initializeRedis();
+    this.initializeMemoryCache();
+    this.setupEventListeners();
+  }
+
+  /**
+   * Get segment with 2-layer cache strategy
+   * L2 (Memory) -> L1 (Redis) -> Database
+   */
+  async getSegment(
+    segmentId: string,
+    accountId: string,
+  ): Promise<CachedSegment | null> {
+    this.stats.totalRequests++;
+    const cacheKey = this.getCacheKey(segmentId, accountId);
+
+    try {
+      // Try L2 (Memory) cache first - fastest
+      const memoryResult = this.memoryCache.get(cacheKey);
+      if (memoryResult) {
+        this.stats.l2CacheHits++;
+        this.updateHitRate();
+        this.logger.debug(`L2 cache hit for segment ${segmentId}`);
+        return memoryResult;
+      }
+      this.stats.l2CacheMisses++;
+
+      // Try L1 (Redis) cache - shared across instances
+      const redisResult = await this.getFromRedis(cacheKey);
+      if (redisResult) {
+        this.stats.l1CacheHits++;
+        // Promote to L2 cache for faster subsequent access
+        this.memoryCache.set(cacheKey, redisResult);
+        this.updateHitRate();
+        this.logger.debug(
+          `L1 cache hit for segment ${segmentId}, promoted to L2`,
+        );
+        return redisResult;
+      }
+      this.stats.l1CacheMisses++;
+
+      // Fallback to database
+      const dbResult = await this.getFromDatabase(segmentId, accountId);
+      if (dbResult) {
+        this.stats.databaseHits++;
+        const cachedSegment = this.transformToCachedSegment(dbResult);
+
+        // Store in both cache layers
+        await this.setInRedis(cacheKey, cachedSegment);
+        this.memoryCache.set(cacheKey, cachedSegment);
+
+        this.updateHitRate();
+        this.logger.debug(
+          `Database hit for segment ${segmentId}, cached in L1 and L2`,
+        );
+        return cachedSegment;
+      }
+
+      this.updateHitRate();
+      return null;
+    } catch (error) {
+      this.logger.error(
+        `Cache error for segment ${segmentId}: ${error.message}`,
+        error.stack,
+      );
+      // Fallback to database on cache error
+      const dbResult = await this.getFromDatabase(segmentId, accountId);
+      return dbResult ? this.transformToCachedSegment(dbResult) : null;
+    }
+  }
+
+  /**
+   * Get multiple segments by account with batch optimization
+   */
+  async getSegmentsByAccount(
+    accountId: string,
+    limit?: number,
+  ): Promise<CachedSegment[]> {
+    const accountCacheKey = `account_segments:${accountId}`;
+
+    try {
+      // Try Redis for account segment list
+      const cachedSegmentIds = await this.redis.smembers(accountCacheKey);
+
+      if (cachedSegmentIds.length > 0) {
+        const segments = await Promise.all(
+          cachedSegmentIds
+            .slice(0, limit)
+            .map((id) => this.getSegment(id, accountId)),
+        );
+        return segments.filter((s) => s !== null) as CachedSegment[];
+      }
+
+      // Fallback to database
+      const queryBuilder = this.segmentRepository
+        .createQueryBuilder('segment')
+        .where('segment.account_id = :accountId', { accountId })
+        .orderBy('segment.updated_at', 'DESC');
+
+      if (limit) {
+        queryBuilder.take(limit);
+      }
+
+      const segments = await queryBuilder.getMany();
+      const cachedSegments = segments.map((s) =>
+        this.transformToCachedSegment(s),
+      );
+
+      // Cache the results
+      if (segments.length > 0) {
+        await this.cacheAccountSegments(accountId, cachedSegments);
+      }
+
+      return cachedSegments;
+    } catch (error) {
+      this.logger.error(
+        `Error getting segments for account ${accountId}: ${error.message}`,
+      );
+      return [];
+    }
+  }
+
+  /**
+   * Cache a segment in both layers
+   */
+  async cacheSegment(segment: CachedSegment): Promise<void> {
+    const cacheKey = this.getCacheKey(segment.id, segment.accountId);
+
+    try {
+      // Store in Redis L1
+      await this.setInRedis(cacheKey, segment);
+
+      // Store in Memory L2
+      this.memoryCache.set(cacheKey, segment);
+
+      // Add to account segment set
+      await this.redis.sadd(
+        `account_segments:${segment.accountId}`,
+        segment.id,
+      );
+
+      this.logger.debug(`Cached segment ${segment.id} in L1 and L2`);
+    } catch (error) {
+      this.logger.error(
+        `Failed to cache segment ${segment.id}: ${error.message}`,
+      );
+    }
+  }
+
+  /**
+   * Invalidate segment from all cache layers
+   */
+  async invalidateSegment(segmentId: string, accountId: string): Promise<void> {
+    const cacheKey = this.getCacheKey(segmentId, accountId);
+
+    try {
+      // Remove from Redis L1
+      await this.redis.del(cacheKey);
+
+      // Remove from Memory L2
+      this.memoryCache.delete(cacheKey);
+
+      // Remove from account segment set
+      await this.redis.srem(`account_segments:${accountId}`, segmentId);
+
+      this.logger.debug(
+        `Invalidated segment ${segmentId} from all cache layers`,
+      );
+
+      // Emit invalidation event
+      this.eventEmitter.emit('segment.cache.invalidated', {
+        segmentId,
+        accountId,
+      });
+    } catch (error) {
+      this.logger.error(
+        `Failed to invalidate segment ${segmentId}: ${error.message}`,
+      );
+    }
+  }
+
+  /**
+   * Invalidate all segments for an account
+   */
+  async invalidateAccountSegments(accountId: string): Promise<void> {
+    try {
+      const segmentIds = await this.redis.smembers(
+        `account_segments:${accountId}`,
+      );
+
+      // Remove individual segments
+      const pipeline = this.redis.pipeline();
+      for (const segmentId of segmentIds) {
+        const cacheKey = this.getCacheKey(segmentId, accountId);
+        pipeline.del(cacheKey);
+        this.memoryCache.delete(cacheKey);
+      }
+
+      // Remove account segment set
+      pipeline.del(`account_segments:${accountId}`);
+      await pipeline.exec();
+
+      this.logger.debug(
+        `Invalidated ${segmentIds.length} segments for account ${accountId}`,
+      );
+
+      // Emit account invalidation event
+      this.eventEmitter.emit('segment.cache.account.invalidated', {
+        accountId,
+        count: segmentIds.length,
+      });
+    } catch (error) {
+      this.logger.error(
+        `Failed to invalidate account segments ${accountId}: ${error.message}`,
+      );
+    }
+  }
+
+  /**
+   * Warm up cache with most used segments
+   */
+  async warmupCache(accountId: string, segmentIds?: string[]): Promise<void> {
+    try {
+      let targetSegmentIds = segmentIds;
+
+      if (!targetSegmentIds) {
+        // Get most recently updated segments
+        const segments = await this.segmentRepository.find({
+          where: { accountId },
+          order: { updatedAt: 'DESC' },
+          take: 50, // Warm up top 50 segments
+        });
+        targetSegmentIds = segments.map((s) => s.id);
+      }
+
+      this.logger.debug(
+        `Warming up cache with ${targetSegmentIds.length} segments for account ${accountId}`,
+      );
+
+      // Pre-load segments into cache
+      const warmupPromises = targetSegmentIds.map(async (segmentId) => {
+        try {
+          await this.getSegment(segmentId, accountId);
+        } catch (error) {
+          this.logger.warn(
+            `Failed to warm up segment ${segmentId}: ${error.message}`,
+          );
+        }
+      });
+
+      await Promise.all(warmupPromises);
+
+      this.logger.log(`Cache warmup completed for account ${accountId}`);
+      this.eventEmitter.emit('segment.cache.warmed', {
+        accountId,
+        count: targetSegmentIds.length,
+      });
+    } catch (error) {
+      this.logger.error(
+        `Cache warmup failed for account ${accountId}: ${error.message}`,
+      );
+    }
+  }
+
+  /**
+   * Get cache statistics
+   */
+  getCacheStats(): SegmentCacheStats {
+    this.stats.l2CacheSize = this.memoryCache.size;
+    return { ...this.stats };
+  }
+
+  /**
+   * Get detailed cache info with Redis stats
+   */
+  async getDetailedCacheStats(): Promise<
+    SegmentCacheStats & { redisInfo: any }
+  > {
+    const baseStats = this.getCacheStats();
+
+    try {
+      const redisInfo = await this.redis.info('memory');
+      return {
+        ...baseStats,
+        redisInfo: this.parseRedisInfo(redisInfo),
+      };
+    } catch (error) {
+      return {
+        ...baseStats,
+        redisInfo: { error: error.message },
+      };
+    }
+  }
+
+  /**
+   * Clear all caches (for testing/maintenance)
+   */
+  async clearAllCaches(): Promise<void> {
+    try {
+      // Clear Redis pattern
+      const keys = await this.redis.keys('segment:*');
+      if (keys.length > 0) {
+        await this.redis.del(...keys);
+      }
+
+      const accountKeys = await this.redis.keys('account_segments:*');
+      if (accountKeys.length > 0) {
+        await this.redis.del(...accountKeys);
+      }
+
+      // Clear memory cache
+      this.memoryCache.clear();
+
+      // Reset stats
+      this.stats = {
+        l1CacheHits: 0,
+        l1CacheMisses: 0,
+        l2CacheHits: 0,
+        l2CacheMisses: 0,
+        databaseHits: 0,
+        totalRequests: 0,
+        l1CacheSize: 0,
+        l2CacheSize: 0,
+        hitRatePercent: 0,
+      };
+
+      this.logger.log('All caches cleared');
+    } catch (error) {
+      this.logger.error(`Failed to clear caches: ${error.message}`);
+    }
+  }
+
+  // Private methods
+  private initializeRedis(): void {
+    this.redis = new Redis({
+      host: this.config.redis?.host || 'localhost',
+      port: this.config.redis?.port || 6379,
+      password: this.config.redis?.password,
+      db: (this.config.redis?.db || 0) + 1, // Use DB 1 for caching (DB 0 for queues)
+      maxRetriesPerRequest: 3,
+      lazyConnect: true,
+      keyPrefix: 'evo_segment_cache:',
+    });
+
+    this.redis.on('connect', () => {
+      this.logger.log('Connected to Redis for segment caching');
+    });
+
+    this.redis.on('error', (error) => {
+      this.logger.error(`Redis cache error: ${error.message}`);
+    });
+  }
+
+  private initializeMemoryCache(): void {
+    this.memoryCache = new LRUCache<string, CachedSegment>({
+      max: 1000, // Maximum 1000 segments in memory
+      ttl: 1000 * 60 * 15, // 15 minutes TTL
+      updateAgeOnGet: true,
+      updateAgeOnHas: true,
+    });
+  }
+
+  private setupEventListeners(): void {
+    // Listen for segment updates to invalidate cache
+    this.eventEmitter.on(
+      'segment.updated',
+      async (data: { segmentId: string; accountId: string }) => {
+        await this.invalidateSegment(data.segmentId, data.accountId);
+      },
+    );
+
+    this.eventEmitter.on(
+      'segment.deleted',
+      async (data: { segmentId: string; accountId: string }) => {
+        await this.invalidateSegment(data.segmentId, data.accountId);
+      },
+    );
+
+    this.eventEmitter.on(
+      'segment.computed',
+      async (data: { segmentId: string; accountId: string }) => {
+        // Invalidate to ensure fresh data after computation
+        await this.invalidateSegment(data.segmentId, data.accountId);
+      },
+    );
+  }
+
+  private getCacheKey(segmentId: string, accountId: string): string {
+    return `segment:${accountId}:${segmentId}`;
+  }
+
+  private async getFromRedis(key: string): Promise<CachedSegment | null> {
+    try {
+      const cached = await this.redis.get(key);
+      return cached ? JSON.parse(cached) : null;
+    } catch (error) {
+      this.logger.warn(`Redis get error for key ${key}: ${error.message}`);
+      return null;
+    }
+  }
+
+  private async setInRedis(key: string, segment: CachedSegment): Promise<void> {
+    try {
+      await this.redis.setex(key, 3600, JSON.stringify(segment)); // 1 hour TTL
+    } catch (error) {
+      this.logger.warn(`Redis set error for key ${key}: ${error.message}`);
+    }
+  }
+
+  private async getFromDatabase(
+    segmentId: string,
+    accountId: string,
+  ): Promise<Segment | null> {
+    return this.segmentRepository.findOne({
+      where: { id: segmentId, accountId },
+    });
+  }
+
+  private transformToCachedSegment(segment: Segment): CachedSegment {
+    return {
+      id: segment.id,
+      accountId: segment.accountId,
+      name: segment.name,
+      definition: segment.definition,
+      status: segment.status,
+      contactsCount: segment.contactsCount,
+      lastComputedAt: segment.lastComputedAt,
+      createdAt: segment.createdAt,
+      updatedAt: segment.updatedAt,
+    };
+  }
+
+  private async cacheAccountSegments(
+    accountId: string,
+    segments: CachedSegment[],
+  ): Promise<void> {
+    const pipeline = this.redis.pipeline();
+
+    for (const segment of segments) {
+      const cacheKey = this.getCacheKey(segment.id, segment.accountId);
+      pipeline.setex(cacheKey, 3600, JSON.stringify(segment));
+      pipeline.sadd(`account_segments:${accountId}`, segment.id);
+    }
+
+    await pipeline.exec();
+  }
+
+  private updateHitRate(): void {
+    const totalHits = this.stats.l1CacheHits + this.stats.l2CacheHits;
+    this.stats.hitRatePercent =
+      this.stats.totalRequests > 0
+        ? Math.round((totalHits / this.stats.totalRequests) * 100)
+        : 0;
+  }
+
+  private parseRedisInfo(infoString: string): any {
+    const lines = infoString.split('\r\n');
+    const info: any = {};
+
+    for (const line of lines) {
+      if (line.includes(':')) {
+        const [key, value] = line.split(':');
+        info[key] = value;
+      }
+    }
+
+    return info;
+  }
+
+  async onModuleDestroy(): Promise<void> {
+    if (this.redis) {
+      await this.redis.quit();
+    }
+  }
+}

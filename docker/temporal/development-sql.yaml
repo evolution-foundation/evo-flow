@@ -1,0 +1,56 @@
+# Temporal Dynamic Configuration for Development
+# Format: Arrays with constraints and values for Temporal 1.24+
+
+# Frontend service RPS limit
+frontend.rps:
+  - value: 2400
+    constraints: {}
+
+# gRPC max message size  
+frontend.grpcMaxMsgSize:
+  - value: 33554432
+    constraints: {}
+
+# History service RPS limit
+history.rps:
+  - value: 3000
+    constraints: {}
+
+# Matching long poll expiration
+matching.longPollExpirationInterval:
+  - value: '60s'
+    constraints: {}
+
+# Worker service RPS limit  
+worker.rps:
+  - value: 1000
+    constraints: {}
+
+# Enable logging in replay for development
+system.enableLoggingInReplay:
+  - value: true
+    constraints: {}
+
+# Default namespace retention period
+system.standardVisibilityPersistenceMaxReadQPS:
+  - value: 9000
+    constraints: {}
+
+system.advancedVisibilityPersistenceMaxReadQPS:
+  - value: 9000
+    constraints: {}
+
+# Development friendly timeout settings
+system.transactionSizeLimit:
+  - value: 4000000
+    constraints: {}
+
+# Enable SQL close idle connections  
+system.enableSQLCloseIdleConnections:
+  - value: true
+    constraints: {}
+
+# Development-friendly visibility settings
+system.enableReadVisibilityFromES:
+  - value: false
+    constraints: {}

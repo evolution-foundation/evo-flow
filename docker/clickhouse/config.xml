@@ -1,0 +1,127 @@
+<?xml version="1.0"?>
+<clickhouse>
+
+    <!-- ========================= -->
+    <!-- LOGGING -->
+    <!-- ========================= -->
+    <logger>
+        <level>information</level>
+        <console>true</console>
+    </logger>
+
+    <!-- ========================= -->
+    <!-- NETWORK -->
+    <!-- ========================= -->
+    <http_port>8123</http_port>
+    <tcp_port>9000</tcp_port>
+    <listen_host>::</listen_host>
+
+    <!-- ========================= -->
+    <!-- USERS -->
+    <!-- ========================= -->
+    <users>
+        <default>
+            <password>password</password>
+            <networks>
+                <ip>::/0</ip>
+            </networks>
+            <profile>default</profile>
+            <quota>default</quota>
+            <databases>
+                <database>default</database>
+                <database>dittofeed</database>
+            </databases>
+        </default>
+    </users>
+
+    <!-- ========================= -->
+    <!-- PROFILES -->
+    <!-- ========================= -->
+    <profiles>
+        <default>
+            <max_memory_usage>10000000000</max_memory_usage>
+            <use_uncompressed_cache>0</use_uncompressed_cache>
+            <load_balancing>random</load_balancing>
+        </default>
+    </profiles>
+
+    <!-- ========================= -->
+    <!-- QUOTAS -->
+    <!-- ========================= -->
+    <quotas>
+        <default>
+            <interval>
+                <duration>3600</duration>
+                <queries>0</queries>
+                <errors>0</errors>
+                <result_rows>0</result_rows>
+                <read_rows>0</read_rows>
+                <execution_time>0</execution_time>
+            </interval>
+        </default>
+    </quotas>
+
+    <!-- ========================= -->
+    <!-- SYSTEM LOG CONTROL -->
+    <!-- ========================= -->
+
+    <query_log>
+        <database>system</database>
+        <table>query_log</table>
+        <partition_by>toYYYYMM(event_date)</partition_by>
+        <ttl>event_date + INTERVAL 7 DAY</ttl>
+    </query_log>
+
+    <part_log>
+        <database>system</database>
+        <table>part_log</table>
+        <partition_by>toYYYYMM(event_date)</partition_by>
+        <ttl>event_date + INTERVAL 7 DAY</ttl>
+    </part_log>
+
+    <text_log>
+        <database>system</database>
+        <table>text_log</table>
+        <partition_by>toYYYYMM(event_date)</partition_by>
+        <ttl>event_date + INTERVAL 3 DAY</ttl>
+    </text_log>
+
+    <metric_log>
+        <database>system</database>
+        <table>metric_log</table>
+        <partition_by>toYYYYMM(event_date)</partition_by>
+        <ttl>event_date + INTERVAL 3 DAY</ttl>
+    </metric_log>
+
+    <asynchronous_metric_log>
+        <database>system</database>
+        <table>asynchronous_metric_log</table>
+        <partition_by>toYYYYMM(event_date)</partition_by>
+        <ttl>event_date + INTERVAL 3 DAY</ttl>
+    </asynchronous_metric_log>
+
+    <!-- TRACE LOGS: DISABLED -->
+    <trace_log>
+        <enabled>false</enabled>
+    </trace_log>
+
+    <!-- ========================= -->
+    <!-- DATA PATH -->
+    <!-- ========================= -->
+    <path>/var/lib/clickhouse/</path>
+    <tmp_path>/var/lib/clickhouse/tmp/</tmp_path>
+    <user_files_path>/var/lib/clickhouse/user_files/</user_files_path>
+    <format_schema_path>/var/lib/clickhouse/format_schemas/</format_schema_path>
+
+    <!-- ========================= -->
+    <!-- DISK SAFETY -->
+    <!-- ========================= -->
+    <storage_configuration>
+        <disks>
+            <default>
+                <keep_free_space_bytes>10737418240</keep_free_space_bytes>
+            </default>
+        </disks>
+    </storage_configuration>
+
+</clickhouse>
