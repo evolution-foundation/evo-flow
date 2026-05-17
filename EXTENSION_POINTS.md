@@ -105,12 +105,17 @@ export class MyService {
 Override:
 
 ```ts
-EvoExtensionPoints.replace('runtime_context', async (req, defaultContext) => ({
-  ...defaultContext,
-  scope_id: await myConsumer.resolveScope(req),
-  feature_flags: await myConsumer.flagsFor(defaultContext.user_id),
-}));
+EvoExtensionPoints.replace('runtime_context', async (req, defaultContext) => {
+  if (!defaultContext.user_id) return defaultContext;
+  return {
+    ...defaultContext,
+    scope_id: await myConsumer.resolveScope(req),
+    feature_flags: await myConsumer.flagsFor(defaultContext.user_id),
+  };
+});
 ```
+
+`user_id` is nullable in the default context (unauthenticated requests, system jobs). The consumer must guard against `null` before forwarding it to APIs that require an authenticated user.
 
 **Breaking-change policy:** renaming `request_id` or `user_id`, changing their type, or removing the `defaultContext` parameter is a major bump. Adding a new optional key to the context (consumers must not assume it is absent) is a minor bump.
 
@@ -124,7 +129,7 @@ EvoExtensionPoints.replace('runtime_context', async (req, defaultContext) => ({
 ```ts
 interface PluginLoaderOptions {
   modules: DynamicModule[];
-  on_load?: (loaded: string[]) => void;
+  onLoad?: (loaded: string[]) => void;
 }
 
 type PluginLoaderFactory = () => PluginLoaderOptions | Promise<PluginLoaderOptions>;
@@ -151,11 +156,11 @@ Override:
 ```ts
 EvoExtensionPoints.replace('plugin_loader', () => ({
   modules: [MyAnalyticsModule, MyComplianceModule],
-  on_load: (names) => console.log('Loaded plugins:', names.join(', ')),
+  onLoad: (names) => console.log('Loaded plugins:', names.join(', ')),
 }));
 ```
 
-**Breaking-change policy:** changing the shape of `PluginLoaderOptions` (renaming `modules`, removing `on_load`) is a major bump. Adding an optional callback slot to the options interface is a minor bump.
+**Breaking-change policy:** changing the shape of `PluginLoaderOptions` (renaming `modules`, removing `onLoad`) is a major bump. Adding an optional callback slot to the options interface is a minor bump.
 
 ---
 
@@ -199,7 +204,7 @@ The example below assembles a hypothetical consumer that registers all four hook
 ```ts
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
-import { EvoExtensionPoints } from 'evo-flow/src/evo-extension-points';
+import { EvoExtensionPoints } from './src/evo-extension-points';
 import { MyConsumerModule } from './my-consumer/my-consumer.module';
 
 async function bootstrap() {
@@ -207,11 +212,14 @@ async function bootstrap() {
     return MyConsumer.isEnabled(name, context);
   });
 
-  EvoExtensionPoints.replace('runtime_context', async (req, defaultContext) => ({
-    ...defaultContext,
-    scope_id: await MyConsumer.resolveScope(req),
-    feature_flags: await MyConsumer.flagsFor(defaultContext.user_id),
-  }));
+  EvoExtensionPoints.replace('runtime_context', async (req, defaultContext) => {
+    if (!defaultContext.user_id) return defaultContext;
+    return {
+      ...defaultContext,
+      scope_id: await MyConsumer.resolveScope(req),
+      feature_flags: await MyConsumer.flagsFor(defaultContext.user_id),
+    };
+  });
 
   EvoExtensionPoints.replace('plugin_loader', () => ({
     modules: [MyConsumerModule],
