@@ -123,6 +123,12 @@ Once running, Swagger UI is available at:
 http://localhost:3334/api
 ```
 
+### Frozen event names
+
+The `event` field on `POST /api/v1/events/track` and the optional `eventName` on `POST /api/v1/events/identify` must be one of the strings in [`src/modules/events/event-names.enum.ts`](./src/modules/events/event-names.enum.ts) (`EVENT_NAMES`). Other values return HTTP 400 from the global `ValidationPipe`. The list is the contract with the CRM publisher (`lib/events/evo_flow_event_names.rb` in `evo-ai-crm-community`); a CI script (`scripts/check-event-names-sync.sh` at the monorepo root) blocks PRs that diverge.
+
+**Growing the list:** adding or removing an entry requires **three coordinated edits in the same PR**: the Ruby file, the TS file, and the `EXPECTED_COUNT` constant in `scripts/check-event-names-sync.sh`. Otherwise the sync job fails with `DIVERGENT — lists match each other but count is N (expected M)`.
+
 ---
 
 ## Configuration

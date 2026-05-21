@@ -1,12 +1,14 @@
-import { IsString, IsOptional, IsObject } from 'class-validator';
+import { IsString, IsOptional, IsObject, IsIn } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { BaseEventDto } from './base-event.dto';
+import { EVENT_NAMES } from '../event-names.enum';
 
 export class TrackEventDto extends BaseEventDto {
   @ApiProperty({
     description: 'Name of the action that a user has performed',
-    example: 'COURSE_CLICKED',
+    example: 'contact.created',
   })
+  @IsIn(EVENT_NAMES, { message: 'event must be one of: $constraint1' })
   @IsString()
   event: string;
 
