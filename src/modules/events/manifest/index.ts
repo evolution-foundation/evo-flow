@@ -16,7 +16,7 @@ export type { EventCatalogEntry, EventCategory, EventSchema, FieldSpec, FieldTyp
 export { EVENT_CATEGORIES };
 
 export function getEventCatalog(): EventCatalogEntry[] {
-  return [...EVENT_NAMES, 'custom' as const].map((name) => EVENT_CATALOG[name]);
+  return EVENT_NAMES.map((name) => EVENT_CATALOG[name]);
 }
 
 export function getEvent(eventName: string): EventCatalogEntry | undefined {

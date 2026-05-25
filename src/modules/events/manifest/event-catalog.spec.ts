@@ -8,14 +8,14 @@ import {
 } from './index';
 
 describe('events manifest catalog', () => {
-  it('exposes one entry per canonical EVENT_NAME plus the custom sentinel', () => {
+  it('exposes one entry per EVENT_NAME (including the custom sentinel)', () => {
     const catalog = getEventCatalog();
     const names = catalog.map((e) => e.eventName);
     for (const n of EVENT_NAMES) {
       expect(names).toContain(n);
     }
     expect(names).toContain('custom');
-    expect(catalog.length).toBe(EVENT_NAMES.length + 1);
+    expect(catalog.length).toBe(EVENT_NAMES.length);
   });
 
   it('returns a known entry for getEvent(canonical name)', () => {
@@ -38,9 +38,9 @@ describe('events manifest catalog', () => {
     expect(getEvent('not.a.real.event')).toBeUndefined();
   });
 
-  it('identifies canonical events with isCanonicalEvent', () => {
+  it('identifies events declared in EVENT_NAMES via isCanonicalEvent', () => {
     expect(isCanonicalEvent('contact.created')).toBe(true);
-    expect(isCanonicalEvent('custom')).toBe(false);
+    expect(isCanonicalEvent('custom')).toBe(true);
     expect(isCanonicalEvent('not.a.real.event')).toBe(false);
   });
 

@@ -22,6 +22,7 @@ export const EVENT_NAMES = [
   'campaign.message.sent',
   'campaign.message.opened',
   'campaign.message.clicked',
+  'custom',
 ] as const;
 
 export type EvoFlowEventName = (typeof EVENT_NAMES)[number];
