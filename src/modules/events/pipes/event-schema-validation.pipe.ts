@@ -43,7 +43,7 @@ export class EventSchemaValidationPipe implements PipeTransform<InboundPayload, 
     payload: Record<string, unknown>,
   ): void {
     for (const [field, spec] of Object.entries(schema.required)) {
-      if (payload[field] === undefined || payload[field] === null) {
+      if (isMissing(payload[field], spec.type)) {
         throw new BadRequestException({
           error: 'MissingRequiredField',
           field,
@@ -54,7 +54,7 @@ export class EventSchemaValidationPipe implements PipeTransform<InboundPayload, 
     }
 
     for (const [field, spec] of Object.entries(schema.optional)) {
-      if (payload[field] !== undefined && payload[field] !== null) {
+      if (!isMissing(payload[field], spec.type)) {
         this.assertFieldType(eventName, field, spec, payload[field]);
       }
     }
@@ -78,6 +78,17 @@ export class EventSchemaValidationPipe implements PipeTransform<InboundPayload, 
   }
 }
 
+// AC3: a required field is missing when it is null/undefined OR an empty string
+// for any string-like type. Other "falsy" values (false, 0) are valid for their
+// types and must not be treated as missing.
+function isMissing(value: unknown, type: FieldType): boolean {
+  if (value === undefined || value === null) return true;
+  if ((type === 'string' || type === 'uuid') && typeof value === 'string' && value === '') {
+    return true;
+  }
+  return false;
+}
+
 function pickEventName(value: InboundPayload): string | undefined {
   if (typeof value.event === 'string') return value.event;
   if (typeof value.eventName === 'string') return value.eventName;
@@ -94,6 +105,8 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 function matchesType(type: FieldType, raw: unknown): boolean {
   switch (type) {
     case 'string':
@@ -105,7 +118,13 @@ function matchesType(type: FieldType, raw: unknown): boolean {
     case 'object':
       return isPlainObject(raw);
     case 'uuid':
-      return typeof raw === 'string' || typeof raw === 'number';
+      // Accept canonical UUID strings, numeric strings (legacy contact_id paths
+      // that emit "42"), or raw numbers. Arbitrary strings like "hello" are
+      // rejected — without this the :uuid type would lie about validation.
+      if (typeof raw === 'number') return Number.isFinite(raw);
+      if (typeof raw !== 'string' || raw === '') return false;
+      if (UUID_REGEX.test(raw)) return true;
+      return !Number.isNaN(Number(raw));
     case 'date':
       if (raw instanceof Date) return !Number.isNaN(raw.getTime());
       if (typeof raw === 'string') return !Number.isNaN(Date.parse(raw));

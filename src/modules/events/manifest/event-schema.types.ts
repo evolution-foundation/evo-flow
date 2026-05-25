@@ -10,14 +10,19 @@ export interface FieldSpec {
 export interface EventSchema {
   required: Record<string, FieldSpec>;
   optional: Record<string, FieldSpec>;
-  allowExtraProperties: boolean;
 }
 
 export type EventCategory = 'contact' | 'conversation' | 'message' | 'campaign' | 'custom';
 
+export type EventDtoType = 'track' | 'identify';
+
 export interface EventCatalogEntry {
   eventName: EvoFlowEventName | 'custom';
   category: EventCategory;
+  // Which evo-flow DTO this event lands on. contact.* travel through
+  // /events/identify (ContactEventsListener#IDENTIFY_PATH); every other
+  // canonical event uses /events/track.
+  dtoType: EventDtoType;
   labelPt: string;
   labelEn: string;
   description: string;

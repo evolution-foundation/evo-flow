@@ -26,12 +26,13 @@ describe('events manifest catalog', () => {
     expect(entry?.schema.required).toHaveProperty('channel_type');
   });
 
-  it('returns the custom entry with allowExtraProperties=true and empty schema', () => {
+  // L4: invariant — custom MUST always accept any payload. No required, no
+  // optional. AC4 ("custom accepts any key/value") depends on this.
+  it('returns the custom entry with empty schema (AC4 invariant)', () => {
     const custom = getEvent('custom');
     expect(custom).toBeDefined();
     expect(custom?.schema.required).toEqual({});
     expect(custom?.schema.optional).toEqual({});
-    expect(custom?.schema.allowExtraProperties).toBe(true);
   });
 
   it('returns undefined for an unknown event name', () => {

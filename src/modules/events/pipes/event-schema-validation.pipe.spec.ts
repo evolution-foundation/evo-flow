@@ -27,7 +27,7 @@ describe('EventSchemaValidationPipe', () => {
         messageId: 'm1',
         contactId: '42',
         event: 'message.delivered',
-        properties: { channel_type: 'Channel::Whatsapp', conversation_id: 'c1', source: 'messaging' },
+        properties: { channel_type: 'Channel::Whatsapp', conversation_id: '550e8400-e29b-41d4-a716-446655440002', source: 'messaging' },
       };
 
       expect(() => pipe.transform(value, bodyMetadata)).toThrow(BadRequestException);
@@ -48,9 +48,9 @@ describe('EventSchemaValidationPipe', () => {
         contactId: '42',
         event: 'message.delivered',
         properties: {
-          message_id: 'msg-uuid-1',
+          message_id: '550e8400-e29b-41d4-a716-446655440000',
           channel_type: 'Channel::Whatsapp',
-          conversation_id: 'conv-uuid-1',
+          conversation_id: '550e8400-e29b-41d4-a716-446655440001',
           source: 'messaging',
         },
       };
@@ -83,7 +83,7 @@ describe('EventSchemaValidationPipe', () => {
         messageId: 'm1',
         contactId: '42',
         eventName: 'contact.created',
-        traits: { id: 'contact-uuid-1', source: 'contact_created' },
+        traits: { id: '550e8400-e29b-41d4-a716-446655440000', source: 'contact_created' },
       };
       expect(pipe.transform(value, bodyMetadata)).toBe(value);
     });
@@ -106,6 +106,105 @@ describe('EventSchemaValidationPipe', () => {
     });
   });
 
+  describe('H1: empty string treated as missing for string-like required fields', () => {
+    it('rejects empty-string message_id as MissingRequiredField', () => {
+      const value = {
+        messageId: 'm1',
+        contactId: '42',
+        event: 'message.delivered',
+        properties: {
+          message_id: '',
+          channel_type: 'Channel::Whatsapp',
+          conversation_id: '550e8400-e29b-41d4-a716-446655440002',
+          source: 'messaging',
+        },
+      };
+      expect(() => pipe.transform(value, bodyMetadata)).toThrow(BadRequestException);
+      try {
+        pipe.transform(value, bodyMetadata);
+      } catch (err) {
+        expect((err as BadRequestException).getResponse()).toEqual({
+          error: 'MissingRequiredField',
+          field: 'message_id',
+          eventName: 'message.delivered',
+        });
+      }
+    });
+
+    it('still accepts false/0 for boolean/number-typed fields (not treated as missing)', () => {
+      const value = {
+        messageId: 'm1',
+        event: 'campaign.triggered',
+        properties: {
+          pipeline_item_id: '550e8400-e29b-41d4-a716-446655440000',
+          pipeline_id: '550e8400-e29b-41d4-a716-446655440001',
+          source: 's',
+          is_lead: false,
+          assigned_by_id: 0,
+        },
+      };
+      expect(pipe.transform(value, bodyMetadata)).toBe(value);
+    });
+  });
+
+  describe('M1: uuid type strictness', () => {
+    it('rejects arbitrary non-UUID non-numeric strings for :uuid fields', () => {
+      const value = {
+        messageId: 'm1',
+        event: 'message.delivered',
+        properties: {
+          message_id: 'not-a-uuid',
+          channel_type: 'Channel::Whatsapp',
+          conversation_id: 'also-not-a-uuid',
+          source: 's',
+        },
+      };
+      expect(() => pipe.transform(value, bodyMetadata)).toThrow(BadRequestException);
+    });
+
+    it('accepts canonical UUID strings', () => {
+      const value = {
+        messageId: 'm1',
+        event: 'message.delivered',
+        properties: {
+          message_id: '550e8400-e29b-41d4-a716-446655440000',
+          channel_type: 'Channel::Whatsapp',
+          conversation_id: '550e8400-e29b-41d4-a716-446655440001',
+          source: 's',
+        },
+      };
+      expect(pipe.transform(value, bodyMetadata)).toBe(value);
+    });
+
+    it('accepts numeric strings (legacy contact_id paths emit "42")', () => {
+      const value = {
+        messageId: 'm1',
+        event: 'message.delivered',
+        properties: {
+          message_id: '42',
+          channel_type: 'Channel::Whatsapp',
+          conversation_id: '99',
+          source: 's',
+        },
+      };
+      expect(pipe.transform(value, bodyMetadata)).toBe(value);
+    });
+
+    it('accepts raw numbers (legacy integer ids)', () => {
+      const value = {
+        messageId: 'm1',
+        event: 'message.delivered',
+        properties: {
+          message_id: 42,
+          channel_type: 'Channel::Whatsapp',
+          conversation_id: 99,
+          source: 's',
+        },
+      };
+      expect(pipe.transform(value, bodyMetadata)).toBe(value);
+    });
+  });
+
   describe('type validation', () => {
     it('rejects InvalidFieldType when message_id is a boolean (uuid type expected)', () => {
       const value = {
@@ -115,7 +214,7 @@ describe('EventSchemaValidationPipe', () => {
         properties: {
           message_id: true,
           channel_type: 'Channel::Whatsapp',
-          conversation_id: 'conv-uuid-1',
+          conversation_id: '550e8400-e29b-41d4-a716-446655440001',
           source: 'messaging',
         },
       };
@@ -156,7 +255,7 @@ describe('EventSchemaValidationPipe', () => {
       const value = {
         messageId: 'm1',
         event: 'conversation.created',
-        properties: { conversation_id: 'c1', inbox_id: 7, source: 'conversation_management' },
+        properties: { conversation_id: '550e8400-e29b-41d4-a716-446655440002', inbox_id: 7, source: 'conversation_management' },
         traits: { source: 'unrelated' },
       };
       expect(pipe.transform(value, bodyMetadata)).toBe(value);
