@@ -190,6 +190,48 @@ describe('EventSchemaValidationPipe', () => {
       expect(pipe.transform(value, bodyMetadata)).toBe(value);
     });
 
+    it('rejects float strings (Ruby Integer() does not accept these either)', () => {
+      const value = {
+        messageId: 'm1',
+        event: 'message.delivered',
+        properties: {
+          message_id: '12.5',
+          channel_type: 'Channel::Whatsapp',
+          conversation_id: '99',
+          source: 's',
+        },
+      };
+      expect(() => pipe.transform(value, bodyMetadata)).toThrow(BadRequestException);
+    });
+
+    it('rejects non-integer numbers (TS/Ruby symmetry)', () => {
+      const value = {
+        messageId: 'm1',
+        event: 'message.delivered',
+        properties: {
+          message_id: 12.5,
+          channel_type: 'Channel::Whatsapp',
+          conversation_id: '99',
+          source: 's',
+        },
+      };
+      expect(() => pipe.transform(value, bodyMetadata)).toThrow(BadRequestException);
+    });
+
+    it('rejects "Infinity" string', () => {
+      const value = {
+        messageId: 'm1',
+        event: 'message.delivered',
+        properties: {
+          message_id: 'Infinity',
+          channel_type: 'Channel::Whatsapp',
+          conversation_id: '99',
+          source: 's',
+        },
+      };
+      expect(() => pipe.transform(value, bodyMetadata)).toThrow(BadRequestException);
+    });
+
     it('accepts raw numbers (legacy integer ids)', () => {
       const value = {
         messageId: 'm1',

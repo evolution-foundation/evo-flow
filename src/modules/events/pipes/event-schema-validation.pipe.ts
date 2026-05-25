@@ -118,13 +118,13 @@ function matchesType(type: FieldType, raw: unknown): boolean {
     case 'object':
       return isPlainObject(raw);
     case 'uuid':
-      // Accept canonical UUID strings, numeric strings (legacy contact_id paths
-      // that emit "42"), or raw numbers. Arbitrary strings like "hello" are
-      // rejected — without this the :uuid type would lie about validation.
-      if (typeof raw === 'number') return Number.isFinite(raw);
+      // Accept canonical UUID strings, integer strings (legacy contact_id paths
+      // emit "42"), or finite integer numbers. Floats / Infinity / hex / etc.
+      // are rejected so the TS contract matches Ruby's Integer()-only rule.
+      if (typeof raw === 'number') return Number.isInteger(raw) && Number.isFinite(raw);
       if (typeof raw !== 'string' || raw === '') return false;
       if (UUID_REGEX.test(raw)) return true;
-      return !Number.isNaN(Number(raw));
+      return /^-?\d+$/.test(raw);
     case 'date':
       if (raw instanceof Date) return !Number.isNaN(raw.getTime());
       if (typeof raw === 'string') return !Number.isNaN(Date.parse(raw));
