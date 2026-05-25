@@ -20,6 +20,7 @@ import {
   TrackBatchEventsDto,
   BatchProcessingResultDto,
 } from './dto';
+import { EventSchemaValidationPipe } from './pipes/event-schema-validation.pipe';
 import { CustomLoggerService } from 'src/common/services/custom-logger.service';
 
 @ApiTags('Events')
@@ -49,7 +50,9 @@ export class EventsController {
     status: HttpStatus.BAD_REQUEST,
     description: 'Invalid event data',
   })
-  async trackEvent(@Body() trackEventDto: TrackEventDto) {
+  async trackEvent(
+    @Body(EventSchemaValidationPipe) trackEventDto: TrackEventDto,
+  ) {
     this.logger.log(`Received track event: ${trackEventDto.event}`);
     return await this.eventsService.trackEvent(trackEventDto);
   }
@@ -74,7 +77,9 @@ export class EventsController {
     status: HttpStatus.BAD_REQUEST,
     description: 'Invalid event data',
   })
-  async identifyEvent(@Body() identifyEventDto: IdentifyEventDto) {
+  async identifyEvent(
+    @Body(EventSchemaValidationPipe) identifyEventDto: IdentifyEventDto,
+  ) {
     this.logger.log('Received identify event');
     return await this.eventsService.identifyEvent(identifyEventDto);
   }
