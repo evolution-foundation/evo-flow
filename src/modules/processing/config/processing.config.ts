@@ -82,8 +82,19 @@ export interface ProcessingConfig {
   };
 }
 
+function parseRunMode(raw: string | undefined): RunMode {
+  if (!raw) return RunMode.SINGLE;
+  const valid = Object.values(RunMode) as string[];
+  if (!valid.includes(raw)) {
+    throw new Error(
+      `Invalid RUN_MODE='${raw}'. Valid values: ${valid.join(', ')}.`,
+    );
+  }
+  return raw as RunMode;
+}
+
 export function getProcessingConfig(): ProcessingConfig {
-  const runMode = (process.env.RUN_MODE as RunMode) || RunMode.SINGLE;
+  const runMode = parseRunMode(process.env.RUN_MODE);
   const queueMode = (process.env.QUEUE_MODE as QueueMode) || QueueMode.KAFKA;
   const writeMode = (process.env.WRITE_MODE as WriteMode) || WriteMode.KAFKA;
 

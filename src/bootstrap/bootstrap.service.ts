@@ -91,6 +91,31 @@ export class BootstrapService {
           '🚀 TEMPORAL WORKER MODE: Journey execution only (production backend)',
         );
         break;
+      case RunMode.CAMPAIGN_WORKER:
+        this.logger.log(
+          '📣 CAMPAIGN WORKER MODE: Campaign execution only (production backend)',
+        );
+        break;
+      case RunMode.CAMPAIGN_PACKER:
+        this.logger.log(
+          '📦 CAMPAIGN PACKER MODE: Audience materialization stage (stub — module pending)',
+        );
+        break;
+      case RunMode.CAMPAIGN_SENDER:
+        this.logger.log(
+          '📤 CAMPAIGN SENDER MODE: Dispatch stage (stub — module pending)',
+        );
+        break;
+      case RunMode.EVENT_RECEIVER:
+        this.logger.log(
+          '📡 EVENT RECEIVER MODE: Inbound webhook receiver (stub — module pending)',
+        );
+        break;
+      case RunMode.EVENT_PROCESS:
+        this.logger.log(
+          '⚙️  EVENT PROCESS MODE: Broker-driven event processor (stub — module pending)',
+        );
+        break;
     }
 
     this.logger.log('='.repeat(60));

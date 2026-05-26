@@ -2,6 +2,24 @@
 import * as dotenv from 'dotenv';
 dotenv.config();
 
+// Stub-mode short-circuit for RUN_MODEs whose dedicated modules have not landed yet.
+// EVO-1194 introduces the names so docker-compose / k8s manifests can already
+// reference them; each downstream story wires its module in and removes the
+// matching case below.
+const STUB_RUN_MODES = new Set([
+  'campaign-packer',
+  'campaign-sender',
+  'event-receiver',
+  'event-process',
+]);
+if (STUB_RUN_MODES.has(process.env.RUN_MODE ?? '')) {
+  // eslint-disable-next-line no-console
+  console.log(
+    `[evo-flow] RUN_MODE=${process.env.RUN_MODE} — stub mode, no module wired yet. Exiting gracefully.`,
+  );
+  process.exit(0);
+}
+
 // Initialize OpenTelemetry BEFORE NestFactory if tracing is enabled
 if (process.env.OTEL_TRACES_ENABLED === 'true') {
   const { NodeSDK } = require('@opentelemetry/sdk-node');

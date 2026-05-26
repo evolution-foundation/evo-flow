@@ -54,4 +54,24 @@ export class AppFactory {
       AppFactory.shouldStartCampaignWorker()
     );
   }
+
+  static shouldStartCampaignPacker(): boolean {
+    const config = getProcessingConfig();
+    return [RunMode.SINGLE, RunMode.CAMPAIGN_PACKER].includes(config.runMode);
+  }
+
+  static shouldStartCampaignSender(): boolean {
+    const config = getProcessingConfig();
+    return [RunMode.SINGLE, RunMode.CAMPAIGN_SENDER].includes(config.runMode);
+  }
+
+  static shouldStartEventReceiver(): boolean {
+    const config = getProcessingConfig();
+    return [RunMode.SINGLE, RunMode.EVENT_RECEIVER].includes(config.runMode);
+  }
+
+  static shouldStartEventProcess(): boolean {
+    const config = getProcessingConfig();
+    return [RunMode.SINGLE, RunMode.EVENT_PROCESS].includes(config.runMode);
+  }
 }
