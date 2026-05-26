@@ -2,20 +2,36 @@
 import * as dotenv from 'dotenv';
 dotenv.config();
 
+import { RunMode } from './modules/processing/enums/run-mode.enum';
+import { parseRunMode } from './modules/processing/config/processing.config';
+
+// Fail-fast validation BEFORE NestFactory.create (EVO-1194 AC3).
+// Throws with the full list of valid values; bubble up to the top-level
+// .catch() at the end of this file, which prints and exits non-zero.
+parseRunMode(process.env.RUN_MODE);
+
 // Stub-mode short-circuit for RUN_MODEs whose dedicated modules have not landed yet.
 // EVO-1194 introduces the names so docker-compose / k8s manifests can already
 // reference them; each downstream story wires its module in and removes the
-// matching case below.
-const STUB_RUN_MODES = new Set([
-  'campaign-packer',
-  'campaign-sender',
-  'event-receiver',
-  'event-process',
+// matching entry from this Set.
+const STUB_RUN_MODES = new Set<string>([
+  RunMode.CAMPAIGN_PACKER, // wired by downstream campaign-packer story (epic 4)
+  RunMode.CAMPAIGN_SENDER, // wired by downstream campaign-sender story (epic 4)
+  RunMode.EVENT_RECEIVER, // wired by EVO-1207 (event-receiver POST /webhooks/*)
+  RunMode.EVENT_PROCESS, // wired by downstream event-process story (epic 3)
 ]);
 if (STUB_RUN_MODES.has(process.env.RUN_MODE ?? '')) {
-  // eslint-disable-next-line no-console
-  console.log(
-    `[evo-flow] RUN_MODE=${process.env.RUN_MODE} — stub mode, no module wired yet. Exiting gracefully.`,
+  // Structured JSON to stderr so log collectors (Loki / Datadog) ingest the
+  // stub-exit event with proper severity instead of treating it as untagged
+  // stdout noise. NestJS Logger is not available pre-NestFactory.
+  process.stderr.write(
+    JSON.stringify({
+      level: 'info',
+      service: 'evo-flow',
+      runMode: process.env.RUN_MODE,
+      msg: 'Stub mode — no module wired yet. Exiting gracefully.',
+      timestamp: new Date().toISOString(),
+    }) + '\n',
   );
   process.exit(0);
 }

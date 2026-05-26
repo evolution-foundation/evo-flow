@@ -82,9 +82,14 @@ export interface ProcessingConfig {
   };
 }
 
-function parseRunMode(raw: string | undefined): RunMode {
-  if (!raw) return RunMode.SINGLE;
-  const valid = Object.values(RunMode) as string[];
+export function parseRunMode(raw: string | undefined): RunMode {
+  if (raw === undefined) return RunMode.SINGLE;
+  if (raw === '') {
+    throw new Error(
+      'RUN_MODE is set to an empty string. Unset the variable to use the default (single) or set a valid value.',
+    );
+  }
+  const valid: readonly string[] = Object.values(RunMode);
   if (!valid.includes(raw)) {
     throw new Error(
       `Invalid RUN_MODE='${raw}'. Valid values: ${valid.join(', ')}.`,

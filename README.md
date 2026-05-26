@@ -176,7 +176,13 @@ AUTH_APIKEY_INTEGRATION_LOCAL=<service-to-service-token>
 
 ## Run Modes
 
-Evo Flow can run as a single process (all-in-one for development) or as separate workers (recommended for production). `RUN_MODE` is required at boot — an invalid value fails fast with the list of valid options.
+Evo Flow can run as a single process (all-in-one for development) or as separate workers (recommended for production). `RUN_MODE` is validated at boot — an invalid value fails fast with the list of valid options. For example, `RUN_MODE=foo npm run dev` exits non-zero with:
+
+```
+Error: Invalid RUN_MODE='foo'. Valid values: single, api, event-worker, segment-worker, temporal-worker, campaign-worker, campaign-packer, campaign-sender, event-receiver, event-process.
+```
+
+Unsetting `RUN_MODE` defaults to `single`; an empty string (`RUN_MODE=`) is rejected with a separate message so accidental misconfigurations don't fall back silently.
 
 Consolidated modes (production-ready today):
 
