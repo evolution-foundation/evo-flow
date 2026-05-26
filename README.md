@@ -176,15 +176,26 @@ AUTH_APIKEY_INTEGRATION_LOCAL=<service-to-service-token>
 
 ## Run Modes
 
-Evo Flow can run as a single process (all-in-one for development) or as separate workers (recommended for production):
+Evo Flow can run as a single process (all-in-one for development) or as separate workers (recommended for production). `RUN_MODE` is required at boot — an invalid value fails fast with the list of valid options.
+
+Consolidated modes (production-ready today):
 
 ```bash
 npm run dev:single      # everything in one process (default for local dev)
-npm run dev:api         # HTTP API only
-npm run dev:event       # event worker (Kafka consumer)
-npm run dev:segment     # segment worker (ClickHouse computation)
-npm run dev:temporal    # Temporal worker (journey workflows)
-npm run dev:campaign    # campaign worker (audience + sender)
+npm run dev:api         # HTTP API gateway only
+npm run dev:event       # event-worker (Kafka consumer)
+npm run dev:segment     # segment-worker (ClickHouse computation)
+npm run dev:temporal    # temporal-worker (journey workflows)
+npm run dev:campaign    # campaign-worker (audience + sender)
+```
+
+Distributed pipeline modes (EVO-1194 — names reserved, modules pending. Each one currently logs and exits 0 so docker-compose / k8s manifests can reference them):
+
+```bash
+npm run dev:campaign-packer    # campaign-packer  — audience materialization stage
+npm run dev:campaign-sender    # campaign-sender  — dispatch stage
+npm run dev:event-receiver     # event-receiver   — inbound webhook receiver
+npm run dev:event-process      # event-process    — broker-driven event processor
 ```
 
 ---
