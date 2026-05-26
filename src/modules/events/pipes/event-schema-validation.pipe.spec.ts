@@ -297,7 +297,7 @@ describe('EventSchemaValidationPipe', () => {
       const value = {
         messageId: 'm1',
         event: 'conversation.created',
-        properties: { conversation_id: '550e8400-e29b-41d4-a716-446655440002', inbox_id: 7, source: 'conversation_management' },
+        properties: { conversation_id: '550e8400-e29b-41d4-a716-446655440002', inbox_id: '550e8400-e29b-41d4-a716-446655440007', source: 'conversation_management' },
         traits: { source: 'unrelated' },
       };
       expect(pipe.transform(value, bodyMetadata)).toBe(value);
