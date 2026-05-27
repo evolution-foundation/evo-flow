@@ -9,14 +9,16 @@ export const EVENTS_FAILED_TOPIC = 'events.failed';
  * failure point in the pipeline; we keep it loose and rely on naming
  * convention + metrics labels for grouping.
  */
-export const eventsFailedSchema = z.object({
-  originalTopic: z.string().min(1),
-  originalPayload: z.unknown(),
-  failureReason: z.string().min(1),
-  attempts: z.number().int().nonnegative(),
-  lastFailureAt: z.iso.datetime({ offset: true }),
-  correlationId: z.string().uuid(),
-});
+export const eventsFailedSchema = z
+  .object({
+    originalTopic: z.string().min(1),
+    originalPayload: z.unknown(),
+    failureReason: z.string().min(1),
+    attempts: z.number().int().nonnegative(),
+    lastFailureAt: z.iso.datetime({ offset: true }),
+    correlationId: z.uuidv4(),
+  })
+  .strict();
 
 export type EventsFailedContract = z.infer<typeof eventsFailedSchema>;
 

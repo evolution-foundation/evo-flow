@@ -2,16 +2,22 @@ import { z } from 'zod';
 
 export const CAMPAIGNS_SEND_TOPIC = 'campaigns.send';
 
-export const campaignsSendSchema = z.object({
-  campaignId: z.string().min(1),
-  page: z.number().int().nonnegative(),
-  totalPages: z.number().int().positive(),
-  contactIds: z.array(z.string().min(1)),
-  templateId: z.string().min(1),
-  channelType: z.string().min(1),
-  packKey: z.string().min(1).optional(),
-  correlationId: z.string().uuid(),
-});
+export const campaignsSendSchema = z
+  .object({
+    campaignId: z.string().min(1),
+    page: z.number().int().positive(),
+    totalPages: z.number().int().positive(),
+    contactIds: z.array(z.string().min(1)).nonempty(),
+    templateId: z.string().min(1),
+    channelType: z.string().min(1),
+    packKey: z.string().min(1).optional(),
+    correlationId: z.uuidv4(),
+  })
+  .strict()
+  .refine((data) => data.page <= data.totalPages, {
+    message: 'page must be ≤ totalPages',
+    path: ['page'],
+  });
 
 export type CampaignsSendContract = z.infer<typeof campaignsSendSchema>;
 

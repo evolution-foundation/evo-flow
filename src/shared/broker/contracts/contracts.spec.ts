@@ -1,14 +1,16 @@
 import {
+  ALL_CONTRACT_TOPIC_NAMES,
+  BROKER_PUBLISH_TOPICS,
   CAMPAIGNS_CONTROL_TOPIC,
   CAMPAIGNS_PACK_TOPIC,
   CAMPAIGNS_SEND_TOPIC,
   CAMPAIGNS_TRACKED_TOPIC,
   EVENTS_ENRICHED_TOPIC,
   EVENTS_FAILED_TOPIC,
-  EVENTS_RECEIVED_TOPIC_PATTERN,
+  EVENTS_RECEIVED_KAFKA_REGEX,
+  EVENTS_RECEIVED_RABBITMQ_BINDING,
   EVENTS_RECEIVED_TOPIC_PREFIX,
   PLATFORMS,
-  STATIC_BROKER_TOPICS,
   getEventsReceivedTopic,
   isCampaignsControlContract,
   isCampaignsPackContract,
@@ -21,8 +23,15 @@ import {
 } from './index';
 
 const VALID_CORRELATION_ID = '550e8400-e29b-41d4-a716-446655440000';
-const VALID_INGESTION_ID = '6ba7b810-9dad-11d1-80b4-00c04fd430c8';
+const VALID_INGESTION_ID = 'b4f8c3e2-0001-4abc-9def-1234567890ab';
+const NON_V4_UUID = '00000000-0000-1000-8000-000000000000';
 const VALID_ISO = '2026-05-14T10:00:00.000Z';
+
+function omit<T extends object, K extends keyof T>(obj: T, key: K): Omit<T, K> {
+  const clone = { ...obj };
+  delete clone[key];
+  return clone;
+}
 
 const validPack = {
   campaignId: 'abc',
@@ -109,9 +118,7 @@ describe('broker contracts — cross-topic invariants', () => {
   it.each(ALL_CONTRACTS)(
     '%s rejects a payload missing correlationId (AC #2)',
     (_label, guard, valid) => {
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars -- destructure-and-drop pattern
-      const { correlationId: _drop, ...withoutCorrelation } = valid;
-      expect(guard(withoutCorrelation)).toBe(false);
+      expect(guard(omit(valid, 'correlationId'))).toBe(false);
     },
   );
 
@@ -119,6 +126,20 @@ describe('broker contracts — cross-topic invariants', () => {
     '%s rejects a payload with a non-UUID correlationId',
     (_label, guard, valid) => {
       expect(guard({ ...valid, correlationId: 'not-a-uuid' })).toBe(false);
+    },
+  );
+
+  it.each(ALL_CONTRACTS)(
+    '%s rejects a non-v4 UUID correlationId (strict v4)',
+    (_label, guard, valid) => {
+      expect(guard({ ...valid, correlationId: NON_V4_UUID })).toBe(false);
+    },
+  );
+
+  it.each(ALL_CONTRACTS)(
+    '%s rejects unknown extra fields (strict schema)',
+    (_label, guard, valid) => {
+      expect(guard({ ...valid, junk: 'extra' })).toBe(false);
     },
   );
 });
@@ -155,14 +176,33 @@ describe('campaigns.send contract', () => {
     );
   });
 
-  it('rejects a negative page', () => {
+  it('rejects a non-positive page', () => {
+    expect(isCampaignsSendContract({ ...validSend, page: 0 })).toBe(false);
     expect(isCampaignsSendContract({ ...validSend, page: -1 })).toBe(false);
+  });
+
+  it('rejects an empty contactIds array (producer should publish campaigns.tracked instead)', () => {
+    expect(isCampaignsSendContract({ ...validSend, contactIds: [] })).toBe(
+      false,
+    );
   });
 
   it('rejects contactIds containing a non-string entry', () => {
     expect(
       isCampaignsSendContract({ ...validSend, contactIds: ['c1', 42] }),
     ).toBe(false);
+  });
+
+  it('rejects page > totalPages (producer bug)', () => {
+    expect(
+      isCampaignsSendContract({ ...validSend, page: 10, totalPages: 5 }),
+    ).toBe(false);
+  });
+
+  it('accepts page === totalPages (last page)', () => {
+    expect(
+      isCampaignsSendContract({ ...validSend, page: 600, totalPages: 600 }),
+    ).toBe(true);
   });
 });
 
@@ -244,6 +284,12 @@ describe('events.received contract', () => {
     ).toBe(false);
   });
 
+  it('rejects a non-v4 UUID ingestionId (strict v4 per story 3.2)', () => {
+    expect(
+      isEventsReceivedContract({ ...validReceived, ingestionId: NON_V4_UUID }),
+    ).toBe(false);
+  });
+
   it('getEventsReceivedTopic builds the canonical topic string', () => {
     expect(getEventsReceivedTopic('evolution-api')).toBe(
       'events.received.evolution-api',
@@ -260,9 +306,7 @@ describe('events.received contract', () => {
 
 describe('events.enriched contract', () => {
   it('rejects a payload missing the ua block', () => {
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars -- destructure-and-drop pattern
-    const { ua: _drop, ...withoutUa } = validEnriched;
-    expect(isEventsEnrichedContract(withoutUa)).toBe(false);
+    expect(isEventsEnrichedContract(omit(validEnriched, 'ua'))).toBe(false);
   });
 
   it('rejects a payload with non-boolean botMarkers.isBot', () => {
@@ -275,9 +319,9 @@ describe('events.enriched contract', () => {
   });
 
   it('inherits envelope validation (rejects missing platform)', () => {
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars -- destructure-and-drop pattern
-    const { platform: _drop, ...withoutPlatform } = validEnriched;
-    expect(isEventsEnrichedContract(withoutPlatform)).toBe(false);
+    expect(isEventsEnrichedContract(omit(validEnriched, 'platform'))).toBe(
+      false,
+    );
   });
 });
 
@@ -304,21 +348,39 @@ describe('events.failed contract', () => {
   });
 });
 
-describe('broker-topics union', () => {
-  it('STATIC_BROKER_TOPICS contains exactly the 6 fixed topic names', () => {
-    expect(STATIC_BROKER_TOPICS).toEqual([
+describe('broker-topics', () => {
+  it('BROKER_PUBLISH_TOPICS lists the 5 topics adapters publish/subscribe to (excludes events.enriched)', () => {
+    expect(BROKER_PUBLISH_TOPICS).toEqual([
       CAMPAIGNS_PACK_TOPIC,
       CAMPAIGNS_SEND_TOPIC,
       CAMPAIGNS_TRACKED_TOPIC,
       CAMPAIGNS_CONTROL_TOPIC,
-      EVENTS_ENRICHED_TOPIC,
       EVENTS_FAILED_TOPIC,
     ]);
+    expect(BROKER_PUBLISH_TOPICS).not.toContain(EVENTS_ENRICHED_TOPIC);
   });
 
-  it('exposes the wildcard pattern for events.received.<platform>', () => {
-    expect(EVENTS_RECEIVED_TOPIC_PATTERN).toBe('events.received.*');
+  it('ALL_CONTRACT_TOPIC_NAMES includes events.enriched (in-process contract)', () => {
+    expect(ALL_CONTRACT_TOPIC_NAMES).toContain(EVENTS_ENRICHED_TOPIC);
+    expect(ALL_CONTRACT_TOPIC_NAMES).toHaveLength(6);
+  });
+
+  it('exposes adapter-specific wildcard patterns for events.received.<platform>', () => {
     expect(EVENTS_RECEIVED_TOPIC_PREFIX).toBe('events.received');
+    expect(EVENTS_RECEIVED_RABBITMQ_BINDING).toBe('events.received.#');
+    expect(
+      EVENTS_RECEIVED_KAFKA_REGEX.test('events.received.evolution-api'),
+    ).toBe(true);
+    expect(EVENTS_RECEIVED_KAFKA_REGEX.test('events.received.sendgrid')).toBe(
+      true,
+    );
+    expect(EVENTS_RECEIVED_KAFKA_REGEX.test('events.received.unknown')).toBe(
+      true,
+    );
+    expect(EVENTS_RECEIVED_KAFKA_REGEX.test('events.enriched')).toBe(false);
+    expect(
+      EVENTS_RECEIVED_KAFKA_REGEX.test('events.received.evolution-api.extra'),
+    ).toBe(false);
   });
 
   it('topic constants are literal strings (not enum members)', () => {
