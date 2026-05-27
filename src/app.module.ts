@@ -25,6 +25,7 @@ import { APP_GUARD } from '@nestjs/core';
 import { BearerAuthGuard } from './auth/bearer-auth.guard';
 import { CrmClientModule } from './shared/crm-client/crm-client.module';
 import { AuthClientModule } from './shared/auth-client/auth-client.module';
+import { BrokerModule } from './shared/broker/broker.module';
 import { AppFactory } from './app-factory';
 
 /**
@@ -61,6 +62,7 @@ export class AppModule {
       }),
       CrmClientModule,
       AuthClientModule,
+      BrokerModule,
     ];
 
     const conditionalImports: any[] = [];
