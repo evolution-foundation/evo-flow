@@ -2,12 +2,14 @@ import { Test } from '@nestjs/testing';
 import { ConfigModule } from '@nestjs/config';
 import { BrokerModule } from './broker.module';
 import {
+  BrokerMessage,
   IMessageBroker,
   IMESSAGE_BROKER,
 } from './interfaces/message-broker.interface';
 import { KafkaBrokerAdapter } from './adapters/kafka-broker.adapter';
 import { RabbitMQBrokerAdapter } from './adapters/rabbitmq-broker.adapter';
 import { BrokerConfigError } from './errors/broker-config.error';
+import { BrokerNotImplementedError } from './errors/broker-not-implemented.error';
 
 function compileBrokerModule(brokerType: string | undefined) {
   const env: Record<string, string> = {};
@@ -87,6 +89,39 @@ describe('BrokerModule', () => {
   it('rejects mixed-case BROKER_TYPE values (strict lowercase)', async () => {
     await expect(compileBrokerModule('Kafka')).rejects.toThrow(
       BrokerConfigError,
+    );
+  });
+
+  describe('stub adapter methods', () => {
+    const dummyMsg: BrokerMessage = {
+      id: 'm-1',
+      payload: null,
+      headers: {},
+      raw: null,
+    };
+    const noopHandler = () => Promise.resolve();
+
+    it.each([
+      ['kafka', KafkaBrokerAdapter],
+      ['rabbitmq', RabbitMQBrokerAdapter],
+    ])(
+      '%s adapter methods reject with BrokerNotImplementedError (no sync throws)',
+      async (_label, AdapterCtor) => {
+        const adapter = new AdapterCtor();
+
+        await expect(adapter.publish('topic-x', { a: 1 })).rejects.toThrow(
+          BrokerNotImplementedError,
+        );
+        await expect(adapter.subscribe('topic-x', noopHandler)).rejects.toThrow(
+          BrokerNotImplementedError,
+        );
+        await expect(adapter.ack(dummyMsg)).rejects.toThrow(
+          BrokerNotImplementedError,
+        );
+        await expect(adapter.nack(dummyMsg, true)).rejects.toThrow(
+          BrokerNotImplementedError,
+        );
+      },
     );
   });
 });

@@ -1,5 +1,5 @@
 import { Global, Module, Provider } from '@nestjs/common';
-import { ConfigModule, ConfigService } from '@nestjs/config';
+import { ConfigService } from '@nestjs/config';
 import {
   IMessageBroker,
   IMESSAGE_BROKER,
@@ -11,16 +11,12 @@ import { RabbitMQBrokerAdapter } from './adapters/rabbitmq-broker.adapter';
 
 const brokerProvider: Provider = {
   provide: IMESSAGE_BROKER,
-  inject: [ConfigService, KafkaBrokerAdapter, RabbitMQBrokerAdapter],
-  useFactory: (
-    config: ConfigService,
-    kafka: KafkaBrokerAdapter,
-    rabbitmq: RabbitMQBrokerAdapter,
-  ): IMessageBroker => {
+  inject: [ConfigService],
+  useFactory: (config: ConfigService): IMessageBroker => {
     const rawValue = config.get<string>('BROKER_TYPE');
     const validList = BROKER_TYPE_VALUES.join(', ');
 
-    if (rawValue === undefined || rawValue === null || rawValue === '') {
+    if (!rawValue) {
       throw new BrokerConfigError(
         `BROKER_TYPE is required but not set. Set BROKER_TYPE to one of: ${validList}.`,
       );
@@ -34,17 +30,22 @@ const brokerProvider: Provider = {
 
     switch (rawValue as BrokerType) {
       case BrokerType.KAFKA:
-        return kafka;
+        return new KafkaBrokerAdapter();
       case BrokerType.RABBITMQ:
-        return rabbitmq;
+        return new RabbitMQBrokerAdapter();
+      default: {
+        const _exhaustive: never = rawValue as never;
+        throw new BrokerConfigError(
+          `BROKER_TYPE="${String(_exhaustive)}" has no adapter mapping. Update BrokerModule factory.`,
+        );
+      }
     }
   },
 };
 
 @Global()
 @Module({
-  imports: [ConfigModule],
-  providers: [KafkaBrokerAdapter, RabbitMQBrokerAdapter, brokerProvider],
+  providers: [brokerProvider],
   exports: [brokerProvider],
 })
 export class BrokerModule {}

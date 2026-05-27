@@ -1,3 +1,9 @@
+/**
+ * Broker-agnostic transport abstraction for the distributed pipeline (EVO-1196).
+ * Concrete adapters (kafkajs, amqplib) live in `../adapters/` and are selected
+ * at boot by `BrokerModule` based on the `BROKER_TYPE` env var.
+ */
+
 export interface BrokerMessage<T = unknown> {
   id: string;
   payload: T;

@@ -4,10 +4,3 @@ export class BrokerConfigError extends Error {
     this.name = 'BrokerConfigError';
   }
 }
-
-export class BrokerNotImplementedError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'BrokerNotImplementedError';
-  }
-}

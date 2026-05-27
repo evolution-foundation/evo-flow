@@ -3,7 +3,6 @@ export enum BrokerType {
   RABBITMQ = 'rabbitmq',
 }
 
-export const BROKER_TYPE_VALUES: readonly BrokerType[] = Object.freeze([
-  BrokerType.KAFKA,
-  BrokerType.RABBITMQ,
-]);
+export const BROKER_TYPE_VALUES: readonly BrokerType[] = Object.freeze(
+  Object.values(BrokerType) as BrokerType[],
+);
