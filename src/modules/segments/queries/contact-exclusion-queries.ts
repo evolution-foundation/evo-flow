@@ -5,10 +5,18 @@
 
 export class ContactExclusionQueries {
   /**
-   * Generates CASE statement to exclude deleted contacts
-   * @param contactIdAlias - The alias used for contact_id in the query (e.g., 'c.contact_id', 'contact_id')
+   * Generates CASE statement to exclude deleted contacts.
+   * @param contactIdAlias - The column reference used for contact_id in the
+   *   outer query (e.g., 'c.contact_id', 'ce.contact_id', 'contact_id'). Must
+   *   be a bare identifier or qualified identifier — no expressions, no
+   *   literals — so it can be safely interpolated into the SQL.
    */
   static getDeletedContactExclusion(contactIdAlias: string): string {
+    if (!/^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)?$/.test(contactIdAlias)) {
+      throw new Error(
+        `Invalid contactIdAlias: expected a SQL identifier (optionally qualified), got "${contactIdAlias}"`,
+      );
+    }
     return `
       CASE
         WHEN (
@@ -31,12 +39,15 @@ export class ContactExclusionQueries {
           WHEN ce.event_name = 'contact_deleted' THEN 0
           ELSE 1
         END,
-        ce.created_at
+        ce.occurred_at
       ) = 1`;
   }
 
   /**
-   * Common WHERE clause for excluding deleted contacts in event-based queries
+   * Common WHERE clause for excluding deleted contacts in event-based queries.
+   * `contact_id IS NOT NULL` in the subquery is required: a single NULL row
+   * makes `NOT IN` evaluate to NULL for every contact and silently empties the
+   * outer result.
    */
   static getEventBasedExclusionClause(): string {
     return `
@@ -44,11 +55,14 @@ export class ContactExclusionQueries {
         SELECT DISTINCT contact_id
         FROM evo_campaign.contact_events
         WHERE event_name = 'contact_deleted'
+          AND contact_id IS NOT NULL
       )`;
   }
 
   /**
-   * Generates exclusion for performed/lastPerformed queries
+   * Generates exclusion for performed/lastPerformed queries. Same
+   * NULL-safety requirement on the NOT IN subquery as
+   * getEventBasedExclusionClause.
    */
   static getPerformedEventExclusion(): string {
     return `
@@ -56,6 +70,7 @@ export class ContactExclusionQueries {
         SELECT contact_id
         FROM evo_campaign.contact_events
         WHERE event_name = 'contact_deleted'
+          AND contact_id IS NOT NULL
       )`;
   }
 }
