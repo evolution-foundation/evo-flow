@@ -608,5 +608,45 @@ describe('RabbitMQBrokerAdapter', () => {
       expect(connectionInstances.length).toBe(1);
       await close();
     });
+
+    it('cancels the background-reconnect chain when destroy fires during reconnect', async () => {
+      const { adapter, close } = await buildAdapter({
+        BROKER_TYPE: 'rabbitmq',
+        RABBITMQ_URL: 'amqp://admin:admin@rabbit:5672',
+        RUN_MODE: 'event-process',
+      });
+      await (
+        adapter as unknown as { onModuleInit: () => Promise<void> }
+      ).onModuleInit();
+      await adapter.subscribe('drop-topic', () => Promise.resolve());
+      const firstConn = lastConn();
+
+      jest.useFakeTimers();
+      try {
+        // Make every reconnect attempt fail so we drain the 5s budget and
+        // schedule the background-reconnect chain.
+        mockState.connectFailuresRemaining = 100;
+        firstConn.connection.__triggerClose!();
+        // Drain the in-budget reconnect loop (~5s of backoff sleeps).
+        await jest.advanceTimersByTimeAsync(6_000);
+
+        // At this point a background setTimeout is queued. Destroy must
+        // clear `reconnecting` so the next firing returns early.
+        await (
+          adapter as unknown as { onModuleDestroy: () => Promise<void> }
+        ).onModuleDestroy();
+        const countBeforeFire = connectionInstances.length;
+
+        // Drain several background intervals — none should produce a new
+        // connection because reconnecting was cleared by destroy.
+        mockState.connectFailuresRemaining = 0; // mock would succeed if attempted
+        await jest.advanceTimersByTimeAsync(30_000);
+
+        expect(connectionInstances.length).toBe(countBeforeFire);
+      } finally {
+        jest.useRealTimers();
+      }
+      await close();
+    });
   });
 });

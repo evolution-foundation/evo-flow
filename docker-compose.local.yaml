@@ -1,3 +1,7 @@
+# Aggregates the per-service composes under docker/ so dev can run
+# `docker compose -f docker-compose.local.yaml up -d` for the full stack
+# or target a single service by name. Requires Docker Compose v2.20+ for
+# the `include:` directive — earlier versions reject this file.
 include:
   - docker/docker-compose.kafka.yml
   - docker/docker-compose.rabbitmq.yml

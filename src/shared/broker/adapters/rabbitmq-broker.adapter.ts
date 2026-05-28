@@ -88,7 +88,10 @@ export class RabbitMQBrokerAdapter
   }
 
   async onModuleDestroy(): Promise<void> {
-    if (!this.active && this.connection === null) return;
+    // Always run cleanup. Without this, a destroy fired while we're in the
+    // background-reconnect chain (active=false, connection=null, reconnecting=true)
+    // would skip cleanup and leave the setTimeout chain alive, leaking the process.
+    this.reconnecting = false;
     this.active = false;
 
     for (const [topic, sub] of this.subscriptions.entries()) {
@@ -427,7 +430,13 @@ export class RabbitMQBrokerAdapter
     this.channel = await this.connection.createChannel();
     await this.channel.prefetch(prefetch);
 
-    this.connection.on('close', () => {
+    this.connection.on('close', (err?: Error) => {
+      if (err) {
+        this.writeStructured('warn', 'broker.connection.close_with_error', {
+          broker: BROKER_LABEL,
+          error: err.message,
+        });
+      }
       void this.handleConnectionClose();
     });
     this.connection.on('error', (err) => {
