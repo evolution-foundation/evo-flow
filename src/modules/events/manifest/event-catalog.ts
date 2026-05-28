@@ -147,6 +147,85 @@ const ENTRIES: EventCatalogEntry[] = [
     },
   },
   {
+    eventName: 'conversation.activity',
+    category: 'conversation',
+    dtoType: 'track',
+    labelPt: 'Atividade na conversa',
+    labelEn: 'Conversation activity',
+    description: 'A lifecycle activity was recorded on a conversation (status change, note, transfer, etc.).',
+    schema: {
+      required: { conversation_id: f('uuid'), source: f('string') },
+      optional: {
+        inbox_id: f('uuid'),
+        content: f('string'),
+        activity_type: f('string'),
+      },
+    },
+  },
+  {
+    eventName: 'conversation.first_reply',
+    category: 'conversation',
+    dtoType: 'track',
+    labelPt: 'Primeira resposta da conversa',
+    labelEn: 'Conversation first reply',
+    description: 'The first agent reply was sent on a conversation.',
+    schema: {
+      required: { conversation_id: f('uuid'), source: f('string') },
+      optional: {
+        inbox_id: f('uuid'),
+        replied_at: f('date'),
+        response_time_seconds: f('number'),
+      },
+    },
+  },
+  {
+    eventName: 'conversation.reply_time',
+    category: 'conversation',
+    dtoType: 'track',
+    labelPt: 'Tempo de resposta da conversa',
+    labelEn: 'Conversation reply time',
+    description: 'An agent reply was sent; reply-time SLA metric was captured.',
+    schema: {
+      required: { conversation_id: f('uuid'), source: f('string') },
+      optional: {
+        inbox_id: f('uuid'),
+        reply_time_seconds: f('number'),
+        measured_at: f('date'),
+      },
+    },
+  },
+  {
+    eventName: 'conversation.bot_handoff',
+    category: 'conversation',
+    dtoType: 'track',
+    labelPt: 'Bot transferiu para humano',
+    labelEn: 'Bot handed off to human',
+    description: 'The bot transferred a conversation to a human agent.',
+    schema: {
+      required: { conversation_id: f('uuid'), source: f('string') },
+      optional: {
+        inbox_id: f('uuid'),
+        handoff_at: f('date'),
+        reason: f('string'),
+      },
+    },
+  },
+  {
+    eventName: 'conversation.bot_resolved',
+    category: 'conversation',
+    dtoType: 'track',
+    labelPt: 'Conversa resolvida pelo bot',
+    labelEn: 'Conversation resolved by bot',
+    description: 'The bot resolved the conversation without escalating to a human.',
+    schema: {
+      required: { conversation_id: f('uuid'), source: f('string') },
+      optional: {
+        inbox_id: f('uuid'),
+        resolved_at: f('date'),
+      },
+    },
+  },
+  {
     eventName: 'message.created',
     category: 'message',
     dtoType: 'track',
