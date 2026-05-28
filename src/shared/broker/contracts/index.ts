@@ -7,6 +7,8 @@ export {
 
 export {
   CAMPAIGNS_PACK_TOPIC,
+  CAMPAIGN_TRIGGERED_BY_VALUES,
+  CampaignTriggeredBy,
   campaignsPackSchema,
   CampaignsPackContract,
   isCampaignsPackContract,

@@ -175,6 +175,22 @@ describe('campaigns.pack contract', () => {
       }),
     ).toBe(true);
   });
+
+  it.each(['schedule', 'manual', 'recurrence'] as const)(
+    'accepts triggeredBy=%s',
+    (triggeredBy) => {
+      expect(isCampaignsPackContract({ ...validPack, triggeredBy })).toBe(true);
+    },
+  );
+
+  it('rejects a triggeredBy outside the PRD enum (e.g., workflow)', () => {
+    expect(
+      isCampaignsPackContract({
+        ...validPack,
+        triggeredBy: 'workflow' as unknown,
+      }),
+    ).toBe(false);
+  });
 });
 
 describe('campaigns.send contract', () => {
