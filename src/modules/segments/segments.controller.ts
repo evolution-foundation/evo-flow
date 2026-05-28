@@ -9,6 +9,8 @@ import {
   Delete,
   Query,
   UseGuards,
+  HttpCode,
+  HttpStatus,
 } from '@nestjs/common';
 import { ClsService } from 'nestjs-cls';
 import {
@@ -18,8 +20,12 @@ import {
   ApiParam,
   ApiQuery,
 } from '@nestjs/swagger';
-import { SegmentsService } from './segments.service';
+import {
+  SegmentsService,
+  SEGMENT_PREVIEW_SAMPLE_SIZE,
+} from './segments.service';
 import { CreateSegmentDto } from './dto/create-segment.dto';
+import { PreviewSegmentDto } from './dto/preview-segment.dto';
 import { UpdateSegmentDto } from './dto/update-segment.dto';
 import { FilterSegmentsDto } from './dto/filter-segments.dto';
 import { SegmentResponseDto } from './dto/segment-response.dto';
@@ -48,6 +54,38 @@ export class SegmentsController {
     @Body() createSegmentDto: CreateSegmentDto,
   ): Promise<SegmentResponseDto> {
     return this.segmentsService.create(createSegmentDto);
+  }
+
+  @Post('preview')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Preview a segment definition without persisting it',
+    description:
+      'Computes an inline segment definition and returns the in-segment ' +
+      `contact count plus a sample of up to ${SEGMENT_PREVIEW_SAMPLE_SIZE} ids. ` +
+      'Nothing is persisted.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Preview computed successfully.',
+    schema: {
+      type: 'object',
+      properties: {
+        count: { type: 'number', example: 142 },
+        sample: {
+          type: 'array',
+          items: { type: 'object', properties: { id: { type: 'string' } } },
+        },
+      },
+    },
+  })
+  @ApiResponse({ status: 422, description: 'Invalid segment definition.' })
+  async preview(
+    @Body() previewSegmentDto: PreviewSegmentDto,
+  ): Promise<{ count: number; sample: { id: string }[] }> {
+    return this.segmentsService.previewByDefinition(
+      previewSegmentDto.definition,
+    );
   }
 
   @Get()
@@ -228,11 +266,7 @@ export class SegmentsController {
     page: number;
     limit: number;
   }> {
-    return this.segmentsService.getSegmentContacts(
-      id,
-      +page,
-      +limit,
-    );
+    return this.segmentsService.getSegmentContacts(id, +page, +limit);
   }
 
   @Get(':id/contact-ids')
@@ -277,10 +311,6 @@ export class SegmentsController {
     limit: number;
     offset: number;
   }> {
-    return this.segmentsService.getSegmentContactIds(
-      id,
-      +limit,
-      +offset,
-    );
+    return this.segmentsService.getSegmentContactIds(id, +limit, +offset);
   }
 }

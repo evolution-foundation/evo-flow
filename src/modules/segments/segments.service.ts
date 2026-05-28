@@ -2,11 +2,14 @@ import {
   Injectable,
   NotFoundException,
   ConflictException,
+  UnprocessableEntityException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, SelectQueryBuilder } from 'typeorm';
 import { EventEmitter2 } from '@nestjs/event-emitter';
-import { Segment } from './entities/segment.entity';
+import { randomUUID } from 'crypto';
+import { Segment, SegmentDefinition } from './entities/segment.entity';
+import { CustomLoggerService } from 'src/common/services/custom-logger.service';
 import { CreateSegmentDto } from './dto/create-segment.dto';
 import { UpdateSegmentDto } from './dto/update-segment.dto';
 import { FilterSegmentsDto } from './dto/filter-segments.dto';
@@ -15,8 +18,17 @@ import { SegmentComputationService } from './services/segment-computation.servic
 import { ModularSegmentComputationService } from './services/modular-segment-computation.service';
 import { SegmentCacheService } from '../cache/services/segment-cache.service';
 
+/** Max number of contact ids returned in a preview sample. Shared with the
+ *  controller's API docs so the value cannot drift. */
+export const SEGMENT_PREVIEW_SAMPLE_SIZE = 10;
+
 @Injectable()
 export class SegmentsService {
+  // new CustomLoggerService(ctx) is the module's convention (see sibling
+  // services) and is context-scoped per class — injecting the shared singleton
+  // would lose/clobber the [SegmentsService] log context.
+  private readonly logger = new CustomLoggerService(SegmentsService.name);
+
   constructor(
     @InjectRepository(Segment)
     private segmentRepository: Repository<Segment>,
@@ -56,6 +68,86 @@ export class SegmentsService {
     });
 
     return await this.toResponseDto(savedSegment);
+  }
+
+  /**
+   * Compute a segment definition WITHOUT persisting anything. Returns the
+   * in-segment contact count and a small sample of ids.
+   *
+   * The pipeline keys all intermediate ClickHouse state on `segment.id`, so we
+   * run it for a transient `preview-*` id and always clean those rows up.
+   * Only STAGE 1 (state) + STAGE 2 (assignments) run — both the count and the
+   * sample read from `computed_property_assignments_v2`; STAGE 3 (change-event
+   * emission) and STAGE 4 (resolved-state save) are intentionally skipped.
+   * Postgres is never touched.
+   */
+  async previewByDefinition(
+    definition: SegmentDefinition,
+  ): Promise<{ count: number; sample: { id: string }[] }> {
+    // The DTO only checks @IsObject(); reject a structurally invalid definition
+    // here as a 422 instead of letting computeState throw a generic error.
+    if (
+      !definition ||
+      typeof definition !== 'object' ||
+      !('entryNode' in definition) ||
+      !definition.entryNode
+    ) {
+      throw new UnprocessableEntityException(
+        'Invalid segment definition: missing entryNode',
+      );
+    }
+
+    const SAMPLE_SIZE = SEGMENT_PREVIEW_SAMPLE_SIZE;
+    const previewId = `preview-${randomUUID()}`;
+    const now = Date.now();
+
+    // Transient instance only — never passed to segmentRepository.save().
+    const segment = this.segmentRepository.create({
+      id: previewId,
+      name: '__preview__',
+      definition,
+      status: 'paused',
+      computedCount: 0,
+    });
+
+    try {
+      await this.modularSegmentComputationService.computeState(
+        segment,
+        definition,
+        now,
+      );
+      await this.modularSegmentComputationService.computeAssignments(
+        segment,
+        definition,
+        now,
+      );
+
+      const { totalContacts } =
+        await this.modularSegmentComputationService.countFinalAssignments(
+          previewId,
+        );
+      const sampleIds = await this.segmentComputationService.getSegmentContacts(
+        previewId,
+        SAMPLE_SIZE,
+        0,
+      );
+
+      return {
+        count: totalContacts,
+        sample: sampleIds.map((id) => ({ id })),
+      };
+    } finally {
+      // Best-effort: drop every ephemeral ClickHouse row keyed by previewId so a
+      // preview leaves zero footprint. Swallow failures so the result still
+      // returns to the caller.
+      await this.modularSegmentComputationService
+        .cleanupOldSegmentData(previewId)
+        .catch((error) =>
+          this.logger.error(
+            `Failed to clean up preview segment ${previewId}: ${(error as Error).message}`,
+          ),
+        );
+    }
   }
 
   async findAll(filter: FilterSegmentsDto): Promise<{
@@ -197,9 +289,7 @@ export class SegmentsService {
       let contactCount = 0;
       try {
         const result =
-          await this.modularSegmentComputationService.countFinalAssignments(
-            id,
-          );
+          await this.modularSegmentComputationService.countFinalAssignments(id);
         contactCount = result.totalContacts;
       } catch (error) {
         console.warn(
