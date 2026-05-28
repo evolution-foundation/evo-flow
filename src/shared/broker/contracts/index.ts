@@ -16,6 +16,8 @@ export {
 
 export {
   CAMPAIGNS_SEND_TOPIC,
+  CAMPAIGN_CHANNEL_TYPES,
+  CampaignChannelType,
   campaignsSendSchema,
   CampaignsSendContract,
   isCampaignsSendContract,

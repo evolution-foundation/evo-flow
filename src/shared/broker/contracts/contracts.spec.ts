@@ -228,6 +228,22 @@ describe('campaigns.send contract', () => {
       isCampaignsSendContract({ ...validSend, page: 600, totalPages: 600 }),
     ).toBe(true);
   });
+
+  it.each(['whatsapp', 'email', 'sms'] as const)(
+    'accepts channelType=%s',
+    (channelType) => {
+      expect(isCampaignsSendContract({ ...validSend, channelType })).toBe(true);
+    },
+  );
+
+  it('rejects a channelType outside the PRD enum (e.g., push)', () => {
+    expect(
+      isCampaignsSendContract({
+        ...validSend,
+        channelType: 'push' as unknown,
+      }),
+    ).toBe(false);
+  });
 });
 
 describe('campaigns.tracked contract', () => {

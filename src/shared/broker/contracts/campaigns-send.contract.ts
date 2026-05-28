@@ -2,6 +2,9 @@ import { z } from 'zod';
 
 export const CAMPAIGNS_SEND_TOPIC = 'campaigns.send';
 
+export const CAMPAIGN_CHANNEL_TYPES = ['whatsapp', 'email', 'sms'] as const;
+export type CampaignChannelType = (typeof CAMPAIGN_CHANNEL_TYPES)[number];
+
 export const campaignsSendSchema = z
   .object({
     campaignId: z.string().min(1),
@@ -9,7 +12,7 @@ export const campaignsSendSchema = z
     totalPages: z.number().int().positive(),
     contactIds: z.array(z.string().min(1)).nonempty(),
     templateId: z.string().min(1),
-    channelType: z.string().min(1),
+    channelType: z.enum(CAMPAIGN_CHANNEL_TYPES),
     packKey: z.string().min(1).optional(),
     correlationId: z.uuidv4(),
   })
