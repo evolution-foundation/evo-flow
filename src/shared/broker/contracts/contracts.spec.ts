@@ -76,14 +76,22 @@ const validReceived = {
 };
 
 const validEnriched = {
-  ...validReceived,
-  ua: {
-    browser: { name: 'Chrome', version: '90.0.1' },
-    os: { name: 'iOS', version: '14.0' },
-    device: { type: 'mobile', vendor: 'Apple', model: 'iPhone' },
+  contactId: 'contact-123',
+  eventType: 'message.delivered',
+  properties: {
+    messageId: 'msg-1',
+    occurredAt: '2026-05-14T10:00:00Z',
   },
-  geo: { country: 'US', region: 'CA', city: 'San Francisco' },
-  botMarkers: { isBot: false, isDatacenter: false },
+  enrichment: {
+    ua: {
+      browser: { name: 'Chrome', version: '90.0.1' },
+      os: { name: 'iOS', version: '14.0' },
+      device: { type: 'mobile', vendor: 'Apple', model: 'iPhone' },
+    },
+    geo: { country: 'US', region: 'CA', city: 'San Francisco' },
+    botMarkers: { isBot: false, isDatacenter: false },
+  },
+  correlationId: VALID_CORRELATION_ID,
 };
 
 const validFailed = {
@@ -305,23 +313,48 @@ describe('events.received contract', () => {
 });
 
 describe('events.enriched contract', () => {
-  it('rejects a payload missing the ua block', () => {
-    expect(isEventsEnrichedContract(omit(validEnriched, 'ua'))).toBe(false);
+  it('rejects a payload missing the enrichment block', () => {
+    expect(isEventsEnrichedContract(omit(validEnriched, 'enrichment'))).toBe(
+      false,
+    );
   });
 
-  it('rejects a payload with non-boolean botMarkers.isBot', () => {
+  it('rejects a payload with non-boolean enrichment.botMarkers.isBot', () => {
     expect(
       isEventsEnrichedContract({
         ...validEnriched,
-        botMarkers: { isBot: 'yes' as unknown, isDatacenter: false },
+        enrichment: {
+          ...validEnriched.enrichment,
+          botMarkers: { isBot: 'yes' as unknown, isDatacenter: false },
+        },
       }),
     ).toBe(false);
   });
 
-  it('inherits envelope validation (rejects missing platform)', () => {
-    expect(isEventsEnrichedContract(omit(validEnriched, 'platform'))).toBe(
+  it('rejects a payload missing contactId', () => {
+    expect(isEventsEnrichedContract(omit(validEnriched, 'contactId'))).toBe(
       false,
     );
+  });
+
+  it('rejects a payload missing eventType', () => {
+    expect(isEventsEnrichedContract(omit(validEnriched, 'eventType'))).toBe(
+      false,
+    );
+  });
+
+  it('accepts properties as an arbitrary key-value record', () => {
+    expect(
+      isEventsEnrichedContract({
+        ...validEnriched,
+        properties: {
+          messageId: 'msg-2',
+          retries: 3,
+          tags: ['vip', 'us'],
+          nested: { a: 1 },
+        },
+      }),
+    ).toBe(true);
   });
 });
 

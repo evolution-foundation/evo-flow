@@ -1,14 +1,19 @@
 import { z } from 'zod';
-import { eventsReceivedSchema } from './events-received.contract';
 
 /**
- * NOTE: stories 3.6 (EnricherService) and 3.7 (ClickHouseWriter) consume
- * `EventsEnrichedContract` in-process via direct method call today, not via
- * a broker publish/subscribe. The card lists it among the 7 broker topics,
- * so the contract is shipped here for both uses; promoting it to a real
- * broker hop is a downstream decision. Note that `EVENTS_ENRICHED_TOPIC`
- * is intentionally absent from `BROKER_PUBLISH_TOPICS` in `broker-topics.ts`
- * — it lives in `ALL_CONTRACT_TOPIC_NAMES` only.
+ * `events.enriched` carries the **post-normalization** event produced by
+ * the event-process pipeline (story 3.6) — not the receiver envelope plus
+ * enrichment fields. The producer resolves `contactId`, canonicalizes
+ * `eventType`, extracts provider-specific data into `properties`, and
+ * derives `enrichment` (ua/geo/botMarkers) before publishing.
+ *
+ * Publication on the broker is **optional** in the MVP per PRD §Topic
+ * Contracts (FR18 — "pode opcionalmente publicar"). Today the event-process
+ * pipeline consumes the same shape in-process for the ClickHouse insert
+ * path (story 3.7) and only emits to the broker for downstream BI/analytics
+ * consumers when configured. `EVENTS_ENRICHED_TOPIC` is intentionally
+ * absent from `BROKER_PUBLISH_TOPICS` in `broker-topics.ts` — it lives in
+ * `ALL_CONTRACT_TOPIC_NAMES` only.
  */
 export const EVENTS_ENRICHED_TOPIC = 'events.enriched';
 
@@ -51,11 +56,21 @@ const botMarkersSchema = z
   })
   .strict();
 
-export const eventsEnrichedSchema = eventsReceivedSchema
-  .extend({
+const enrichmentSchema = z
+  .object({
     ua: userAgentSchema,
     geo: geoSchema,
     botMarkers: botMarkersSchema,
+  })
+  .strict();
+
+export const eventsEnrichedSchema = z
+  .object({
+    contactId: z.string().min(1),
+    eventType: z.string().min(1),
+    properties: z.record(z.string(), z.unknown()),
+    enrichment: enrichmentSchema,
+    correlationId: z.uuidv4(),
   })
   .strict();
 
