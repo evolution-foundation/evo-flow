@@ -1,0 +1,4 @@
+include:
+  - docker/docker-compose.kafka.yml
+  - docker/docker-compose.rabbitmq.yml
+  - docker/docker-compose.clickhouse.yml
