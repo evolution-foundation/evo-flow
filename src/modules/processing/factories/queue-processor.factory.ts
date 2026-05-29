@@ -4,6 +4,7 @@ import { QueueProcessor } from '../interfaces/queue-processor.interface';
 import { RedisQueueProcessor } from '../queue-processors/redis.processor';
 import { KafkaQueueProcessor } from '../queue-processors/kafka.processor';
 import { RabbitMQQueueProcessor } from '../queue-processors/rabbitmq.processor';
+import { DirectQueueProcessor } from '../queue-processors/direct.processor';
 import { getProcessingConfig } from '../config/processing.config';
 import { ClickHouseService } from '../clickhouse/clickhouse.service';
 import { KafkaService } from '../kafka/kafka.service';
@@ -26,6 +27,17 @@ export class QueueProcessorFactory {
     this.logger.log(`Creating queue processor for mode: ${config.queueMode}`);
 
     switch (config.queueMode) {
+      case QueueMode.DIRECT:
+        // Grava direto no ClickHouse, sem fila/broker (single-node / dev /
+        // debug). Casa com WRITE_MODE=ch-sync. Sem ClickHouse não há para onde
+        // gravar — falha explícita em vez de cair no broker errado.
+        if (!clickhouseService) {
+          throw new Error(
+            'ClickHouse service not provided for direct queue mode',
+          );
+        }
+        return new DirectQueueProcessor(clickhouseService);
+
       case QueueMode.REDIS:
         return new RedisQueueProcessor();
 
