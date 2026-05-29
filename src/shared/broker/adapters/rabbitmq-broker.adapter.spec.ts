@@ -15,6 +15,7 @@ type ChannelMock = {
   prefetch: jest.Mock;
   cancel: jest.Mock;
   close: jest.Mock;
+  on: jest.Mock;
   __triggerMessage?: (
     raw: {
       content: Buffer | null;
@@ -22,6 +23,8 @@ type ChannelMock = {
       properties: { headers?: Record<string, unknown> };
     } | null,
   ) => void;
+  __triggerChannelError?: (err: Error) => void;
+  __triggerChannelClose?: () => void;
 };
 
 type ConnectionMock = {
@@ -75,6 +78,19 @@ jest.mock('amqplib', () => {
             prefetch: jest.fn().mockResolvedValue(undefined),
             cancel: jest.fn().mockResolvedValue(undefined),
             close: jest.fn().mockResolvedValue(undefined),
+            on: jest
+              .fn()
+              .mockImplementation(
+                (event: string, listener: (...args: unknown[]) => void) => {
+                  if (event === 'error') {
+                    channel.__triggerChannelError = listener as (
+                      err: Error,
+                    ) => void;
+                  } else if (event === 'close') {
+                    channel.__triggerChannelClose = listener as () => void;
+                  }
+                },
+              ),
           };
           const connection: ConnectionMock = {
             createChannel: jest.fn().mockResolvedValue(channel),
@@ -605,6 +621,99 @@ describe('RabbitMQBrokerAdapter', () => {
       await new Promise((r) => setImmediate(r));
 
       // No new connection instance should have been created.
+      expect(connectionInstances.length).toBe(1);
+      await close();
+    });
+
+    it('registers channel listeners on openConnection (error + close)', async () => {
+      const { adapter, close } = await buildAdapter({
+        BROKER_TYPE: 'rabbitmq',
+        RABBITMQ_URL: 'amqp://admin:admin@rabbit:5672',
+      });
+      await (
+        adapter as unknown as { onModuleInit: () => Promise<void> }
+      ).onModuleInit();
+
+      const ch = lastConn().channel;
+      expect(ch.on).toHaveBeenCalledWith('error', expect.any(Function));
+      expect(ch.on).toHaveBeenCalledWith('close', expect.any(Function));
+      await close();
+    });
+
+    it('logs but does NOT reconnect when the channel emits a bare error event', async () => {
+      const { adapter, close } = await buildAdapter({
+        BROKER_TYPE: 'rabbitmq',
+        RABBITMQ_URL: 'amqp://admin:admin@rabbit:5672',
+        RUN_MODE: 'event-process',
+      });
+      await (
+        adapter as unknown as { onModuleInit: () => Promise<void> }
+      ).onModuleInit();
+      await adapter.subscribe('err-topic', () => Promise.resolve());
+      const firstConn = lastConn();
+
+      expect(() =>
+        firstConn.channel.__triggerChannelError!(
+          new Error('PRECONDITION_FAILED - bogus ack'),
+        ),
+      ).not.toThrow();
+      await new Promise((r) => setImmediate(r));
+
+      // No new connection — channel error alone doesn't drive reconnect; the
+      // subsequent 'close' event would.
+      expect(connectionInstances.length).toBe(1);
+      await close();
+    });
+
+    it('triggers a full reconnect when the channel closes unexpectedly while active', async () => {
+      const { adapter, close } = await buildAdapter({
+        BROKER_TYPE: 'rabbitmq',
+        RABBITMQ_URL: 'amqp://admin:admin@rabbit:5672',
+        RUN_MODE: 'event-process',
+      });
+      await (
+        adapter as unknown as { onModuleInit: () => Promise<void> }
+      ).onModuleInit();
+      await adapter.subscribe('chan-drop-topic', () => Promise.resolve());
+      const firstConn = lastConn();
+
+      jest.useFakeTimers();
+      try {
+        firstConn.channel.__triggerChannelClose!();
+        await jest.advanceTimersByTimeAsync(600);
+      } finally {
+        jest.useRealTimers();
+      }
+      await new Promise((r) => setImmediate(r));
+
+      expect(connectionInstances.length).toBeGreaterThanOrEqual(2);
+      const newConn = lastConn();
+      expect(newConn.channel.assertQueue).toHaveBeenCalledWith(
+        'event-process-chan-drop-topic',
+        { durable: true },
+      );
+      await close();
+    });
+
+    it('does NOT reconnect when channel close fires after onModuleDestroy', async () => {
+      const { adapter, close } = await buildAdapter({
+        BROKER_TYPE: 'rabbitmq',
+        RABBITMQ_URL: 'amqp://admin:admin@rabbit:5672',
+        RUN_MODE: 'event-process',
+      });
+      await (
+        adapter as unknown as { onModuleInit: () => Promise<void> }
+      ).onModuleInit();
+      await adapter.subscribe('chan-shutdown-topic', () => Promise.resolve());
+      const firstConn = lastConn();
+
+      await (
+        adapter as unknown as { onModuleDestroy: () => Promise<void> }
+      ).onModuleDestroy();
+
+      firstConn.channel.__triggerChannelClose!();
+      await new Promise((r) => setImmediate(r));
+
       expect(connectionInstances.length).toBe(1);
       await close();
     });

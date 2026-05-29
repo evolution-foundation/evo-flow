@@ -445,6 +445,26 @@ export class RabbitMQBrokerAdapter
         error: (err as Error).message,
       });
     });
+    this.channel.on('error', (err) => {
+      // amqplib emits 'error' on the channel for protocol errors (invalid ack,
+      // publish to a missing exchange, etc.). Without a listener Node crashes
+      // with 'Unhandled error event'. The 'close' event right after drives
+      // the actual reconnect.
+      this.writeStructured('error', 'broker.channel.error', {
+        broker: BROKER_LABEL,
+        error: (err as Error).message,
+      });
+    });
+    this.channel.on('close', () => {
+      // Channel close with the connection still alive means broker/amqplib
+      // killed only the channel; consumers would silently stop without a
+      // reconnect. Active=false means we're in shutdown — nothing to do.
+      if (!this.active) return;
+      this.writeStructured('warn', 'broker.channel.closed_unexpected', {
+        broker: BROKER_LABEL,
+      });
+      void this.handleConnectionClose();
+    });
   }
 
   private async handleConnectionClose(): Promise<void> {
