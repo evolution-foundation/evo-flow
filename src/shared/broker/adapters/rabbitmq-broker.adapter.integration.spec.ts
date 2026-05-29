@@ -143,14 +143,16 @@ describeIntegration('RabbitMQBrokerAdapter (integration)', () => {
       await internal.connection.close();
     }
 
-    // Wait for the adapter to come back online (≤5s budget per AC3).
+    // AC3 literal: reconnect must complete in under 5s. Give waitFor a small
+    // margin (5.5s) so a near-budget reconnect still surfaces via the assert,
+    // but enforce the <5000ms bound on the measurement itself.
     const reconnectStart = Date.now();
     await waitFor(
       () => (adapter as unknown as { active: boolean }).active === true,
-      8_000,
+      5_500,
     );
     const reconnectMs = Date.now() - reconnectStart;
-    expect(reconnectMs).toBeLessThan(8_000);
+    expect(reconnectMs).toBeLessThan(5_000);
 
     await adapter.publish(topic, { n: 2 });
     await waitFor(() => deliveries.length >= 2, 10_000);
