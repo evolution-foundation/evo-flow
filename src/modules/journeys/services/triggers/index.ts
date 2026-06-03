@@ -6,3 +6,4 @@ export * from './contact-updated.trigger';
 export * from './segment.trigger';
 export * from './label.trigger';
 export * from './custom-attribute.trigger';
+export * from './pipeline-stage-changed.trigger';

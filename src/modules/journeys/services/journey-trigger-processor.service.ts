@@ -22,6 +22,7 @@ import {
   SegmentTrigger,
   LabelTrigger,
   CustomAttributeTrigger,
+  PipelineStageChangedTrigger,
   BaseTrigger,
 } from './triggers';
 
@@ -110,6 +111,10 @@ export class JourneyTriggerProcessor implements OnModuleInit, OnModuleDestroy {
     this.triggerHandlers.set('segment', new SegmentTrigger());
     this.triggerHandlers.set('label', new LabelTrigger());
     this.triggerHandlers.set('customattribute', new CustomAttributeTrigger());
+    this.triggerHandlers.set(
+      'pipelinestagechanged',
+      new PipelineStageChangedTrigger(),
+    );
   }
 
   async onModuleInit() {

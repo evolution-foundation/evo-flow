@@ -44,6 +44,7 @@ export enum TriggerType {
   ContactUpdated = 'ContactUpdated',
   Label = 'Label',
   CustomAttribute = 'CustomAttribute',
+  PipelineStageChanged = 'PipelineStageChanged',
 }
 
 export interface TriggerCondition {
