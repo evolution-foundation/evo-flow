@@ -369,6 +369,11 @@ export class CrmClientService {
       headers['X-Request-Id'] = transactionId;
     }
 
+    const correlationId = this.readCorrelationId();
+    if (correlationId) {
+      headers['X-Correlation-Id'] = correlationId;
+    }
+
     return headers;
   }
 
@@ -376,6 +381,15 @@ export class CrmClientService {
     if (!this.cls) return undefined;
     try {
       return this.cls.get<string>('transactionId');
+    } catch {
+      return undefined;
+    }
+  }
+
+  private readCorrelationId(): string | undefined {
+    if (!this.cls) return undefined;
+    try {
+      return this.cls.get<string>('correlationId');
     } catch {
       return undefined;
     }

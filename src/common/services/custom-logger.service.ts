@@ -1,5 +1,6 @@
 import { Injectable, ConsoleLogger, LogLevel, Logger } from '@nestjs/common';
 import { getProcessingConfig } from '../../modules/processing/config/processing.config';
+import { readCorrelationIdFromCls } from '../../shared/correlation/correlation.util';
 import * as winston from 'winston';
 import * as path from 'path';
 
@@ -64,18 +65,19 @@ export class CustomLoggerService extends ConsoleLogger {
   }
 
   log(message: any, context?: string | object) {
+    const correlationId = readCorrelationIdFromCls();
     if (typeof context === 'object') {
       // Se context é um objeto, converte para string e adiciona à mensagem
       const contextStr = JSON.stringify(context, null, 2);
       const logMessage = this.addRunModeToMessage(`${message}\n${contextStr}`);
       super.log(logMessage);
       // Also log to file
-      this.fileLogger.info(message, { context, ...context });
+      this.fileLogger.info(message, { context, correlationId, ...context });
     } else {
       const logMessage = this.addRunModeToMessage(message);
       super.log(logMessage, context);
       // Also log to file
-      this.fileLogger.info(message, { context });
+      this.fileLogger.info(message, { context, correlationId });
     }
   }
 
@@ -133,10 +135,11 @@ export class CustomLoggerService extends ConsoleLogger {
     super.log(`PERF: ${message}`, data);
     
     // Log to file with detailed timestamp
-    this.fileLogger.info(message, { 
-      performance: true, 
+    this.fileLogger.info(message, {
+      performance: true,
       timestamp,
-      ...data 
+      correlationId: readCorrelationIdFromCls(),
+      ...data
     });
   }
 

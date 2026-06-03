@@ -32,6 +32,7 @@ import { BearerAuthGuard } from './auth/bearer-auth.guard';
 import { CrmClientModule } from './shared/crm-client/crm-client.module';
 import { AuthClientModule } from './shared/auth-client/auth-client.module';
 import { BrokerModule } from './shared/broker/broker.module';
+import { CorrelationModule } from './shared/correlation/correlation.module';
 import { AppFactory } from './app-factory';
 import {
   EvoExtensionPoints,
@@ -74,6 +75,7 @@ export class AppModule {
       // DB-context seam (ADR14, story 10.1b). Global no-op provider in community;
       // the enterprise overlay contributes the per-request RLS transaction.
       TenantDbContextModule,
+      CorrelationModule,
       CrmClientModule,
       AuthClientModule,
       BrokerModule,

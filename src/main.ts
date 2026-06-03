@@ -89,8 +89,14 @@ import { DataSource } from 'typeorm';
 import { AppModule } from './app.module';
 import { CustomLoggerService } from './common/services/custom-logger.service';
 import { loadExternalExtensions } from './evo-extension-points';
+import axios from 'axios';
+import { applyCorrelationHeader } from './shared/correlation/axios-correlation.interceptor';
 
 async function bootstrap() {
+  // Propagate X-Correlation-Id on raw `axios.*` outbound calls (auth proxies,
+  // send-webhook node). axios.create() instances opt in separately.
+  applyCorrelationHeader(axios);
+
   // 🔍 DEBUG: Log environment variables BEFORE anything else
   console.log('🔍 DEBUG - Environment variables at startup:');
   console.log('  KAFKA_BROKERS:', process.env.KAFKA_BROKERS);
