@@ -19,7 +19,6 @@ import { CampaignWorkflowService } from './services/campaign-workflow.service';
 import { CampaignMessageSenderService } from './services/campaign-message-sender.service';
 import { CampaignExecutionsService } from './services/campaign-executions.service';
 import { ContactsModule } from '../contacts/contacts.module';
-import { SegmentsModule } from '../segments/segments.module';
 
 @Module({
   imports: [
@@ -35,7 +34,6 @@ import { SegmentsModule } from '../segments/segments.module';
     ]),
     ConfigModule,
     ContactsModule,
-    SegmentsModule,
   ],
   controllers: [
     CampaignsController,
