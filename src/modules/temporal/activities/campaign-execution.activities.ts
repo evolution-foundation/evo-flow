@@ -1,7 +1,7 @@
 import { log } from '@temporalio/activity';
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from '../../../app.module';
-import { AudienceComputationService } from '../../campaigns/services/audience-computation.service';
+import { AudienceComputationService } from '../../../shared/audience/audience-computation.service';
 import { CampaignsService } from '../../campaigns/services/campaigns.service';
 import { Campaign } from '../../campaigns/entities/campaign.entity';
 import { CampaignExecution } from '../../campaigns/entities/campaign-execution.entity';

@@ -1,6 +1,6 @@
 import { SegmentQueryBuilderService } from './segment-query-builder.service';
-import { Segment } from '../../segments/entities/segment.entity';
-import { TenantDbContext } from '../../../evo-extension-points';
+import { Segment } from '../../modules/segments/entities/segment.entity';
+import { TenantDbContext } from '../../evo-extension-points';
 
 describe('SegmentQueryBuilderService', () => {
   const segmentRepository: any = {};

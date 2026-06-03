@@ -1,11 +1,11 @@
 import { Injectable } from '@nestjs/common';
 import { Repository } from 'typeorm';
-import { Campaign } from '../entities/campaign.entity';
-import { Segment } from '../../segments/entities/segment.entity';
-import { Tagging, TaggableType } from '../../labels/entities/tagging.entity';
-import { TenantDbContext } from '../../../evo-extension-points';
-import { ContactsClientService } from '../../../shared/crm-client/contacts-client.service';
-import type { HydratedContact } from '../../../shared/crm-client/types/contact';
+import { Campaign } from '../../modules/campaigns/entities/campaign.entity';
+import { Segment } from '../../modules/segments/entities/segment.entity';
+import { Tagging, TaggableType } from '../../modules/labels/entities/tagging.entity';
+import { TenantDbContext } from '../../evo-extension-points';
+import { ContactsClientService } from '../crm-client/contacts-client.service';
+import type { HydratedContact } from '../crm-client/types/contact';
 
 export interface SegmentQuery {
   type: 'segment' | 'sql' | 'tags' | 'all';

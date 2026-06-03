@@ -3,7 +3,7 @@ import { Repository, In } from 'typeorm';
 import { Campaign } from '../entities/campaign.entity';
 import { CampaignContact } from '../entities/campaign-contact.entity';
 import { TenantDbContext } from '../../../evo-extension-points';
-import { SegmentQueryBuilderService } from './segment-query-builder.service';
+import { SegmentQueryBuilderService } from '../../../shared/audience/segment-query-builder.service';
 import { ContactsClientService } from '../../../shared/crm-client/contacts-client.service';
 import {
   mapContactDto,

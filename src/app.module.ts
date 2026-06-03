@@ -33,6 +33,7 @@ import { CrmClientModule } from './shared/crm-client/crm-client.module';
 import { AuthClientModule } from './shared/auth-client/auth-client.module';
 import { BrokerModule } from './shared/broker/broker.module';
 import { CorrelationModule } from './shared/correlation/correlation.module';
+import { AudienceModule } from './shared/audience/audience.module';
 import { AppFactory } from './app-factory';
 import {
   EvoExtensionPoints,
@@ -79,6 +80,7 @@ export class AppModule {
       CrmClientModule,
       AuthClientModule,
       BrokerModule,
+      AudienceModule,
     ];
 
     const conditionalImports: Array<DynamicModule | Type> = [];

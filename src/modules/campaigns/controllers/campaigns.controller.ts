@@ -22,7 +22,7 @@ import {
   ApiQuery,
 } from '@nestjs/swagger';
 import { CampaignsService } from '../services/campaigns.service';
-import { AudienceComputationService } from '../services/audience-computation.service';
+import { AudienceComputationService } from '../../../shared/audience/audience-computation.service';
 import { AudienceValidationService } from '../services/audience-validation.service';
 import { CampaignWorkflowService } from '../services/campaign-workflow.service';
 import { CampaignExecutionsService } from '../services/campaign-executions.service';

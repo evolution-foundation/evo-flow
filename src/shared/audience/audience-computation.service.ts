@@ -1,15 +1,15 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Repository } from 'typeorm';
-import { Campaign } from '../entities/campaign.entity';
-import { CampaignContact } from '../entities/campaign-contact.entity';
-import { TenantDbContext } from '../../../evo-extension-points';
-import { SegmentComputationService } from '../../segments/services/segment-computation.service';
+import { Campaign } from '../../modules/campaigns/entities/campaign.entity';
+import { CampaignContact } from '../../modules/campaigns/entities/campaign-contact.entity';
+import { TenantDbContext } from '../../evo-extension-points';
+import { SegmentComputationService } from '../../modules/segments/services/segment-computation.service';
 import { SegmentQueryBuilderService } from './segment-query-builder.service';
-import { ContactsClientService } from '../../../shared/crm-client/contacts-client.service';
+import { ContactsClientService } from '../crm-client/contacts-client.service';
 import {
   mapContactDto,
   type HydratedContact,
-} from '../../../shared/crm-client/types/contact';
+} from '../crm-client/types/contact';
 
 export interface AudienceComputationResult {
   campaignId: string;

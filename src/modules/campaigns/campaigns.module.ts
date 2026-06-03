@@ -14,8 +14,6 @@ import { CampaignTemplatesController } from './controllers/campaign-templates.co
 import { CampaignsService } from './services/campaigns.service';
 import { CampaignTemplatesService } from './services/campaign-templates.service';
 import { TemplateReplicationService } from './services/template-replication.service';
-import { SegmentQueryBuilderService } from './services/segment-query-builder.service';
-import { AudienceComputationService } from './services/audience-computation.service';
 import { AudienceValidationService } from './services/audience-validation.service';
 import { CampaignWorkflowService } from './services/campaign-workflow.service';
 import { CampaignMessageSenderService } from './services/campaign-message-sender.service';
@@ -47,8 +45,6 @@ import { SegmentsModule } from '../segments/segments.module';
     CampaignsService,
     CampaignTemplatesService,
     TemplateReplicationService,
-    SegmentQueryBuilderService,
-    AudienceComputationService,
     AudienceValidationService,
     CampaignWorkflowService,
     CampaignMessageSenderService,
@@ -58,8 +54,6 @@ import { SegmentsModule } from '../segments/segments.module';
     CampaignsService,
     CampaignTemplatesService,
     TemplateReplicationService,
-    SegmentQueryBuilderService,
-    AudienceComputationService,
     AudienceValidationService,
     CampaignWorkflowService,
     CampaignMessageSenderService,
