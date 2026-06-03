@@ -108,7 +108,7 @@ export class BootstrapService {
         break;
       case RunMode.EVENT_RECEIVER:
         this.logger.log(
-          '📡 EVENT RECEIVER MODE: Inbound webhook receiver (stub — module pending)',
+          '📡 EVENT RECEIVER MODE: Inbound webhook receiver (POST /webhooks/*)',
         );
         break;
       case RunMode.EVENT_PROCESS:

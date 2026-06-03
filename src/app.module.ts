@@ -34,6 +34,7 @@ import { AuthClientModule } from './shared/auth-client/auth-client.module';
 import { BrokerModule } from './shared/broker/broker.module';
 import { CorrelationModule } from './shared/correlation/correlation.module';
 import { AudienceModule } from './shared/audience/audience.module';
+import { EventReceiverModule } from './runners/event-receiver/event-receiver.module';
 import { AppFactory } from './app-factory';
 import {
   EvoExtensionPoints,
@@ -86,6 +87,9 @@ export class AppModule {
     const conditionalImports: Array<DynamicModule | Type> = [];
     if (AppFactory.shouldStartTemporalWorker()) {
       conditionalImports.push(TemporalModule);
+    }
+    if (AppFactory.shouldStartEventReceiver()) {
+      conditionalImports.push(EventReceiverModule);
     }
 
     // Extension point (story 0.15): external consumers — e.g. an enterprise

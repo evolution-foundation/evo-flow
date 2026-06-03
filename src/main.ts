@@ -17,7 +17,6 @@ parseRunMode(process.env.RUN_MODE);
 const STUB_RUN_MODES = new Set<string>([
   RunMode.CAMPAIGN_PACKER, // wired by downstream campaign-packer story (epic 4)
   RunMode.CAMPAIGN_SENDER, // wired by downstream campaign-sender story (epic 4)
-  RunMode.EVENT_RECEIVER, // wired by EVO-1207 (event-receiver POST /webhooks/*)
   RunMode.EVENT_PROCESS, // wired by downstream event-process story (epic 3)
 ]);
 if (STUB_RUN_MODES.has(process.env.RUN_MODE ?? '')) {
@@ -90,6 +89,7 @@ import { AppModule } from './app.module';
 import { CustomLoggerService } from './common/services/custom-logger.service';
 import { loadExternalExtensions } from './evo-extension-points';
 import axios from 'axios';
+import { json, raw, urlencoded } from 'express';
 import { applyCorrelationHeader } from './shared/correlation/axios-correlation.interceptor';
 
 async function bootstrap() {
@@ -123,6 +123,10 @@ async function bootstrap() {
 
   const app = await NestFactory.create(AppModule.forRoot(), {
     logger: logLevels, // Use minimal log levels instead of custom logger for cleaner output
+    // Body parsing is configured manually below (story 3.1 / EVO-1207) so the
+    // event-receiver can capture the raw webhook body and own malformed-payload
+    // handling instead of letting the default JSON parser reject it first.
+    bodyParser: false,
   });
 
   // Migration safety guardrail in production.
@@ -144,10 +148,33 @@ async function bootstrap() {
 
   // Only setup HTTP server if needed (not for event-processor mode)
   if (AppFactory.shouldStartHttpServer()) {
+    // Body parsing (story 3.1 / EVO-1207). bodyParser was disabled at the
+    // factory level so the webhook receiver gets a raw catch-all parser:
+    // /webhooks/* is read into a Buffer (preserved on req.rawBody for the
+    // signature check in story 3.4 and envelope assembly in story 3.2) without
+    // the JSON parser throwing on malformed input — the controller decides.
+    // Every other route keeps the standard json + urlencoded behaviour.
+    app.use(
+      '/webhooks',
+      raw({
+        type: () => true,
+        limit: '5mb',
+        verify: (req, _res, buf: Buffer) => {
+          (req as unknown as { rawBody?: Buffer }).rawBody = buf;
+        },
+      }),
+    );
+    app.use(json());
+    app.use(urlencoded({ extended: true }));
+
     // Set global API prefix for all routes
-    // RedirectController route must be explicitly excluded
+    // RedirectController and the webhook receiver are explicitly excluded —
+    // external providers post to /webhooks/<platform> with no /api/v1 prefix.
     app.setGlobalPrefix('api/v1', {
-      exclude: ['link/:shortCode'],
+      exclude: [
+        'link/:shortCode',
+        { path: 'webhooks/*splat', method: RequestMethod.POST },
+      ],
     });
 
     app.useGlobalPipes(

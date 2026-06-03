@@ -4,10 +4,11 @@ import { getProcessingConfig } from './modules/processing/config/processing.conf
 export class AppFactory {
   static shouldStartHttpServer(): boolean {
     const config = getProcessingConfig();
-    // Only API and SINGLE modes need HTTP server
+    // Only API, SINGLE and EVENT_RECEIVER modes need HTTP server
     return [
       RunMode.SINGLE, // Development: everything
       RunMode.API, // Production: API gateway only
+      RunMode.EVENT_RECEIVER, // Production: webhook receiver (story 3.1)
     ].includes(config.runMode);
   }
 
