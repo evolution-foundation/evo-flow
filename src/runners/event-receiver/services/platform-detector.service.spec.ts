@@ -23,10 +23,14 @@ describe('PlatformDetectorService', () => {
     expect(detector.detect('  Evolution-API  ')).toBe('evolution-api');
   });
 
-  it.each<[string | undefined]>([['foo'], [''], ['unknown'], [undefined]])(
+  it.each<[string | undefined]>([['foo'], [''], [undefined]])(
     'falls back to "unknown" for unrecognized segment %p',
     (segment) => {
       expect(detector.detect(segment)).toBe('unknown');
     },
   );
+
+  it('resolves the whitelisted "unknown" segment to itself (not a fallback)', () => {
+    expect(detector.detect('unknown')).toBe('unknown');
+  });
 });

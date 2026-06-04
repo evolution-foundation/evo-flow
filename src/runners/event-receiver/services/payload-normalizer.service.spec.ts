@@ -43,17 +43,37 @@ describe('PayloadNormalizerService', () => {
     );
   });
 
+  it('redacts credential-bearing headers but keeps provider signature headers', () => {
+    const envelope = normalizer.build({
+      ...baseInput,
+      headers: {
+        authorization: 'Bearer super-secret',
+        cookie: 'session=abc',
+        'x-api-key': 'key-123',
+        'x-hub-signature-256': 'sha256=deadbeef',
+        'content-type': 'application/json',
+      } as IncomingHttpHeaders,
+    });
+
+    expect(envelope.headers['authorization']).toBe('[REDACTED]');
+    expect(envelope.headers['cookie']).toBe('[REDACTED]');
+    expect(envelope.headers['x-api-key']).toBe('[REDACTED]');
+    // Signature headers must survive — story 3.4 needs them for HMAC.
+    expect(envelope.headers['x-hub-signature-256']).toBe('sha256=deadbeef');
+    expect(envelope.headers['content-type']).toBe('application/json');
+  });
+
   it('flattens array-valued headers and drops undefined ones', () => {
     const envelope = normalizer.build({
       ...baseInput,
       headers: {
-        'set-cookie': ['a=1', 'b=2'],
+        'x-forwarded-for': ['203.0.113.7', '10.0.0.1'],
         'x-real-ip': '10.0.0.1',
         'x-empty': undefined,
       } as IncomingHttpHeaders,
     });
 
-    expect(envelope.headers['set-cookie']).toBe('a=1, b=2');
+    expect(envelope.headers['x-forwarded-for']).toBe('203.0.113.7, 10.0.0.1');
     expect(envelope.headers['x-real-ip']).toBe('10.0.0.1');
     expect(envelope.headers).not.toHaveProperty('x-empty');
   });

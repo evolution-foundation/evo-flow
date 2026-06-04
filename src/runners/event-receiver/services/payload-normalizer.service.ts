@@ -15,6 +15,23 @@ export interface NormalizerInput {
 }
 
 /**
+ * Credential-bearing headers redacted before the envelope reaches the broker
+ * (and, downstream, the event store). The header name is kept so the shape is
+ * preserved, but the value is masked. Provider signature headers
+ * (`x-*-signature`, etc.) are intentionally NOT redacted — story 3.4 needs them
+ * for HMAC verification.
+ */
+const REDACTED_HEADERS = new Set<string>([
+  'authorization',
+  'proxy-authorization',
+  'cookie',
+  'set-cookie',
+  'x-api-key',
+]);
+
+const REDACTED_VALUE = '[REDACTED]';
+
+/**
  * Builds the `events.received.<platform>` envelope from a raw inbound webhook
  * (story 3.2 / EVO-1209). Carries the raw payload plus ingestion metadata; it
  * does NOT map provider-specific shapes to a unified schema (that is downstream).
@@ -40,7 +57,11 @@ export class PayloadNormalizerService {
     const flat: Record<string, string> = {};
     for (const [key, value] of Object.entries(headers)) {
       if (value === undefined) continue;
-      flat[key] = Array.isArray(value) ? value.join(', ') : value;
+      flat[key] = REDACTED_HEADERS.has(key.toLowerCase())
+        ? REDACTED_VALUE
+        : Array.isArray(value)
+          ? value.join(', ')
+          : value;
     }
     return flat;
   }
