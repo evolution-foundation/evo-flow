@@ -32,9 +32,10 @@ export class WebhooksController {
     const contentType = String(req.headers['content-type'] ?? '');
     const rawBody = Buffer.isBuffer(req.body) ? req.body : req.rawBody;
 
-    let parsed: unknown;
     try {
-      parsed = this.parsePayload(rawBody, contentType);
+      // Parse only to reject malformed payloads (400). The broker envelope
+      // carries the raw body, not the parsed shape, so the result is discarded.
+      this.parsePayload(rawBody, contentType);
     } catch {
       this.logger.warn(
         `Rejected malformed webhook payload (platform=${platform}, content-type=${contentType})`,
@@ -50,7 +51,12 @@ export class WebhooksController {
     );
 
     try {
-      await this.intake.intake({ platform, contentType, rawBody, parsed });
+      await this.intake.intake({
+        pathSegment: platform,
+        rawBody,
+        headers: req.headers,
+        sourceIp: this.extractSourceIp(req),
+      });
     } catch (error) {
       this.logger.error(
         `Webhook intake failed (platform=${platform}): ${
@@ -66,6 +72,28 @@ export class WebhooksController {
     }
 
     res.status(200).json({ ok: true });
+  }
+
+  private extractSourceIp(req: RawRequest): string {
+    // Respect reverse-proxy headers (NGINX, ALB, Cloudflare) before falling
+    // back to the socket — the receiver sits behind a proxy in every deploy.
+    const forwardedFor = req.headers['x-forwarded-for'];
+    if (forwardedFor) {
+      const first = Array.isArray(forwardedFor)
+        ? forwardedFor[0]
+        : forwardedFor.split(',')[0];
+      return first.trim();
+    }
+
+    const realIp = req.headers['x-real-ip'];
+    if (realIp) return Array.isArray(realIp) ? realIp[0] : realIp;
+
+    const cfConnectingIp = req.headers['cf-connecting-ip'];
+    if (cfConnectingIp) {
+      return Array.isArray(cfConnectingIp) ? cfConnectingIp[0] : cfConnectingIp;
+    }
+
+    return req.ip || req.socket?.remoteAddress || 'unknown';
   }
 
   private extractPlatform(req: RawRequest): string {

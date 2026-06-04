@@ -61,8 +61,8 @@ describe('WebhooksController', () => {
     expect(res.json).toHaveBeenCalledWith({ ok: true });
     expect(intake.intake).toHaveBeenCalledWith(
       expect.objectContaining({
-        platform: 'evolution-api',
-        parsed: { foo: 'bar' },
+        pathSegment: 'evolution-api',
+        rawBody: Buffer.from('{"foo":"bar"}'),
       }),
     );
   });
@@ -89,7 +89,10 @@ describe('WebhooksController', () => {
     expect(res.status).toHaveBeenCalledWith(200);
     expect(res.json).toHaveBeenCalledWith({ ok: true });
     expect(intake.intake).toHaveBeenCalledWith(
-      expect.objectContaining({ parsed: 'anything goes here' }),
+      expect.objectContaining({
+        pathSegment: 'evolution-api',
+        rawBody: Buffer.from('anything goes here'),
+      }),
     );
   });
 
@@ -102,7 +105,10 @@ describe('WebhooksController', () => {
 
     expect(res.status).toHaveBeenCalledWith(200);
     expect(intake.intake).toHaveBeenCalledWith(
-      expect.objectContaining({ parsed: { a: '1', b: '2' } }),
+      expect.objectContaining({
+        pathSegment: 'evolution-api',
+        rawBody: Buffer.from('a=1&b=2'),
+      }),
     );
   });
 
@@ -141,7 +147,27 @@ describe('WebhooksController', () => {
     );
 
     expect(intake.intake).toHaveBeenCalledWith(
-      expect.objectContaining({ platform: 'evolution-api/instance-1' }),
+      expect.objectContaining({ pathSegment: 'evolution-api/instance-1' }),
+    );
+  });
+
+  it('takes the first X-Forwarded-For hop as the source IP (behind a proxy)', async () => {
+    const res = mockRes();
+    const req = {
+      body: Buffer.from('{}'),
+      rawBody: Buffer.from('{}'),
+      headers: {
+        'content-type': 'application/json',
+        'x-forwarded-for': '203.0.113.7, 10.0.0.1',
+      },
+      params: { splat: 'evolution-api' },
+      path: '/webhooks/evolution-api',
+    } as unknown as Request;
+
+    await controller.receive(req, res as unknown as Response);
+
+    expect(intake.intake).toHaveBeenCalledWith(
+      expect.objectContaining({ sourceIp: '203.0.113.7' }),
     );
   });
 });
