@@ -9,8 +9,6 @@ import {
   ParseUUIDPipe,
   HttpStatus,
   HttpCode,
-  Headers,
-  Req,
 } from '@nestjs/common';
 import { ClsService } from 'nestjs-cls';
 import {
@@ -328,8 +326,6 @@ export class JourneysController {
   async triggerSpecificJourneyWebhook(
     @Param('journeyId', ParseUUIDPipe) journeyId: string,
     @Body() payload: any,
-    @Headers() headers: any,
-    @Req() request: any,
   ): Promise<{
     success: boolean;
     messageId: string;
@@ -340,7 +336,6 @@ export class JourneysController {
     return await this.journeysService.processSpecificJourneyWebhookTrigger(
       journeyId,
       payload,
-      headers,
     );
   }
 }

@@ -6,10 +6,12 @@ import {
 import { Repository } from 'typeorm';
 import { Journey } from './entities/journey.entity';
 import { CreateJourneyDto, UpdateJourneyDto } from './dto';
-import { ProcessingService } from '../processing/processing.service';
-import { EventData } from '../processing/interfaces/event-data.interface';
 import { CustomLoggerService } from '../../common/services/custom-logger.service';
 import { JourneyCacheService } from '../cache/services/journey-cache.service';
+import {
+  JourneySessionsService,
+  StartJourneyTriggerEvent,
+} from './services/journey-sessions.service';
 import { TenantDbContext } from '../../evo-extension-points';
 import { v4 as uuidv4 } from 'uuid';
 
@@ -19,8 +21,8 @@ export class JourneysService {
 
   constructor(
     private readonly db: TenantDbContext,
-    private readonly processingService: ProcessingService,
     private readonly journeyCacheService: JourneyCacheService,
+    private readonly journeySessionsService: JourneySessionsService,
   ) {
     this.logger = new CustomLoggerService(JourneysService.name);
   }
@@ -282,7 +284,6 @@ export class JourneysService {
   async processSpecificJourneyWebhookTrigger(
     journeyId: string,
     payload: any,
-    headers: any,
   ): Promise<{
     success: boolean;
     messageId: string;
@@ -314,41 +315,46 @@ export class JourneysService {
         throw new BadRequestException(`Journey ${journeyId} is not active`);
       }
 
-      const eventData: EventData = {
+      // The manual trigger targets THIS journey directly. It does not go
+      // through event matching — a `manual` trigger type matches no handler,
+      // so relying on `processEvent` would never start the named journey.
+      // Payload `data.*` is merged into the top level of `properties` so node
+      // inputs such as `conversation_id` are read the same way as events from
+      // the real CRM emitter (which publishes them at `properties` top level).
+      const triggerEvent: StartJourneyTriggerEvent = {
         messageId,
-        contactId,
         eventType: 'track',
         eventName: 'webhook.journey_trigger',
         properties: {
+          ...(payload.data || {}),
           journeyId,
           endpoint: `/api/v1/journeys/trigger/${journeyId}`,
           data: payload.data || {},
-          headers: this.sanitizeHeaders(headers),
           method: 'POST',
-          originalPayload: payload,
+          source: 'journey_webhook',
         },
         timestamp: processedAt.toISOString(),
-        context: {
-          source: 'journey_webhook',
-          userAgent: headers['user-agent'],
-          ip: headers['x-forwarded-for'] || headers['x-real-ip'],
-        },
       };
 
-      const result = await this.processingService.processEvent(eventData);
+      const result = await this.journeySessionsService.startJourney(
+        journey,
+        contactId,
+        triggerEvent,
+      );
 
-      if (result.status === 'error') {
+      if (!result.started) {
         throw new BadRequestException(
-          `Failed to process journey trigger event: ${result.error}`,
+          `Journey ${journeyId} not started: ${result.reason || 'unknown reason'}`,
         );
       }
 
-      this.logger.log('Journey webhook trigger event processed successfully', {
+      this.logger.log('Journey manual trigger started a session', {
         messageId,
         journeyId,
         contactId,
         journeyName: journey.name,
-        eventProcessingResult: result.status,
+        sessionId: result.sessionId,
+        workflowId: result.workflowId,
       });
 
       return {
