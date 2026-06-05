@@ -812,6 +812,27 @@ export async function JourneyExecutionWorkflow(
               });
             break;
 
+          case 'send-email-team-node':
+            nodeResult = await actionNodeActivities.executeSendEmailTeamNode({
+              nodeId: currentNode.id,
+              conversationId:
+                input.triggerEvent?.properties?.conversation_id || undefined,
+              sessionId: input.sessionId,
+              nodeData: currentNode.data,
+            });
+            break;
+
+          case 'assign-to-pipeline-node':
+            nodeResult =
+              await actionNodeActivities.executeAssignToPipelineNode({
+                nodeId: currentNode.id,
+                conversationId:
+                  input.triggerEvent?.properties?.conversation_id || undefined,
+                sessionId: input.sessionId,
+                nodeData: currentNode.data,
+              });
+            break;
+
           case 'send-transcript-node':
             nodeResult = await actionNodeActivities.executeSendTranscriptNode({
               nodeId: currentNode.id,
@@ -888,8 +909,9 @@ export async function JourneyExecutionWorkflow(
             break;
 
           case 'defer-conversation-node':
+            // Defer aliases snooze — same CRM effect ('snoozed').
             nodeResult =
-              await actionNodeActivities.executeDeferConversationNode({
+              await actionNodeActivities.executeSnoozeConversationNode({
                 nodeId: currentNode.id,
                 conversationId:
                   input.triggerEvent?.properties?.conversation_id || '',

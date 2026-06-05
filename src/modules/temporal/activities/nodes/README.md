@@ -26,13 +26,20 @@ a conversation status change):
    `workflows/journey-execution.workflow.ts` calling the activity (extract
    `conversation_id` from `input.triggerEvent?.properties`).
 5. **Index** — export the node from its category `index.ts`.
-6. **Coverage guard** — add the node type to `WIRED_ACTION_NODE_TYPES` in
-   `workflows/journey-execution.coverage.spec.ts` so a future regression turns
-   the test red.
+6. **Manifest** — add the node type to the frontend manifest
+   `evo-ai-frontend-community/src/pages/Customer/Journey/journey-node-manifest.json`
+   (it is added there automatically as part of building the palette node; its
+   own `journey-node-manifest.spec.ts` keeps it in sync with `nodeTypes`).
 
 ## Frontend ↔ executor parity
 
-The palette source of truth is `evo-ai-frontend-community`
-`src/pages/Customer/Journey/JourneyFlowEditor.tsx` (`nodeTypes`). The coverage
-guard asserts every wired type has a `case`; nodes still pending an executor are
-listed in `KNOWN_UNWIRED_PHASE_2` there.
+The palette source of truth is the frontend manifest
+`evo-ai-frontend-community/.../journey-node-manifest.json` (kept honest against
+`JourneyFlowEditor.tsx` `nodeTypes` by its own spec). The executor coverage guard
+`workflows/journey-execution.coverage.spec.ts` reads that manifest and asserts
+every palette node type has a `case` here — so a palette node shipped without an
+executor turns the guard red instead of shipping inert.
+
+CI caveat: evo-flow CI (Sourcery) does not check out the frontend repo, so when
+the sibling manifest is absent the guard degrades to a documented skip; the real
+parity check runs in the monorepo checkout / locally.

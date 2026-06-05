@@ -5,7 +5,7 @@ import {
 
 describe('SendCannedResponseNode', () => {
   let node: SendCannedResponseNode;
-  let getCannedResponses: jest.Mock;
+  let getCannedResponse: jest.Mock;
   let sendMessage: jest.Mock;
 
   const baseInput: SendCannedResponseNodeInput = {
@@ -17,23 +17,24 @@ describe('SendCannedResponseNode', () => {
 
   beforeEach(() => {
     node = new SendCannedResponseNode();
-    getCannedResponses = jest.fn();
+    getCannedResponse = jest.fn();
     sendMessage = jest.fn();
-    (node as any).crmService = { getCannedResponses, sendMessage };
+    (node as any).crmService = { getCannedResponse, sendMessage };
     jest
       .spyOn(node as any, 'interpolateNodeData')
       .mockImplementation(async (_input, nodeData) => nodeData);
   });
 
   it('resolves canned content by id and sends it as a message (happy path)', async () => {
-    getCannedResponses.mockResolvedValue({
+    getCannedResponse.mockResolvedValue({
       success: true,
-      data: { data: [{ id: 'cr-1', content: 'Hello there' }] },
+      data: { data: { id: 'cr-1', content: 'Hello there' } },
     });
     sendMessage.mockResolvedValue({ success: true, data: { id: 'msg-1' } });
 
     const result = await node.execute(baseInput);
 
+    expect(getCannedResponse).toHaveBeenCalledWith('cr-1');
     expect(sendMessage).toHaveBeenCalledWith(
       { conversationId: 'conv-1' },
       'Hello there',
@@ -48,7 +49,7 @@ describe('SendCannedResponseNode', () => {
   });
 
   it('skips the send (no message) when the canned response is not found', async () => {
-    getCannedResponses.mockResolvedValue({ success: true, data: { data: [] } });
+    getCannedResponse.mockResolvedValue({ success: false, error: 'not found' });
 
     const result = await node.execute(baseInput);
 
@@ -60,7 +61,7 @@ describe('SendCannedResponseNode', () => {
   it('skips when no canned_response_id is configured', async () => {
     const result = await node.execute({ ...baseInput, nodeData: {} });
 
-    expect(getCannedResponses).not.toHaveBeenCalled();
+    expect(getCannedResponse).not.toHaveBeenCalled();
     expect(sendMessage).not.toHaveBeenCalled();
     expect(result.success).toBe(true);
   });

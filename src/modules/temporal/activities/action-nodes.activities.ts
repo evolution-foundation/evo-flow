@@ -27,6 +27,8 @@ import {
 } from './nodes';
 import { SendMessageNode, SendMessageNodeInput } from './nodes/evoai/communication/send-message.node';
 import { SendCannedResponseNode, SendCannedResponseNodeInput } from './nodes/evoai/communication/send-canned-response.node';
+import { SendEmailTeamNode, SendEmailTeamNodeInput } from './nodes/evoai/communication/send-email-team.node';
+import { AssignToPipelineNode, AssignToPipelineNodeInput } from './nodes/evoai/pipeline/assign-to-pipeline.node';
 import { SendTranscriptNode, SendTranscriptNodeInput } from './nodes/evoai/communication/send-transcript.node';
 import { AssignAgentNode, AssignAgentNodeInput } from './nodes/evoai/assignment/assign-agent.node';
 import { AssignTeamNode, AssignTeamNodeInput } from './nodes/evoai/assignment/assign-team.node';
@@ -34,7 +36,6 @@ import { AssignBotNode, AssignBotNodeInput } from './nodes/evoai/assignment/assi
 import { MuteConversationNode, MuteConversationNodeInput } from './nodes/evoai/conversation/mute-conversation.node';
 import { ResolveConversationNode, ResolveConversationNodeInput } from './nodes/evoai/conversation/resolve-conversation.node';
 import { SnoozeConversationNode, SnoozeConversationNodeInput } from './nodes/evoai/conversation/snooze-conversation.node';
-import { DeferConversationNode, DeferConversationNodeInput } from './nodes/evoai/conversation/defer-conversation.node';
 import { ChangePriorityNode, ChangePriorityNodeInput } from './nodes/evoai/conversation/change-priority.node';
 import { ScheduledActionNode, ScheduledActionNodeInput } from './nodes/scheduled-action.node';
 import { calculateWaitTimes } from '../utils/wait-time.util';
@@ -63,7 +64,8 @@ export {
   ResolveConversationNodeInput,
   SnoozeConversationNodeInput,
   SendCannedResponseNodeInput,
-  DeferConversationNodeInput,
+  SendEmailTeamNodeInput,
+  AssignToPipelineNodeInput,
   ChangePriorityNodeInput,
   ScheduledActionNodeInput,
 };
@@ -104,6 +106,12 @@ export interface ActionNodeActivities {
   executeSendCannedResponseNode(
     input: SendCannedResponseNodeInput,
   ): Promise<NodeExecutionResult>;
+  executeSendEmailTeamNode(
+    input: SendEmailTeamNodeInput,
+  ): Promise<NodeExecutionResult>;
+  executeAssignToPipelineNode(
+    input: AssignToPipelineNodeInput,
+  ): Promise<NodeExecutionResult>;
   executeSendTranscriptNode(
     input: SendTranscriptNodeInput,
   ): Promise<NodeExecutionResult>;
@@ -124,9 +132,6 @@ export interface ActionNodeActivities {
   ): Promise<NodeExecutionResult>;
   executeSnoozeConversationNode(
     input: SnoozeConversationNodeInput,
-  ): Promise<NodeExecutionResult>;
-  executeDeferConversationNode(
-    input: DeferConversationNodeInput,
   ): Promise<NodeExecutionResult>;
   executeChangePriorityNode(
     input: ChangePriorityNodeInput,
@@ -157,6 +162,8 @@ let conditionalNode: ConditionalNode;
 let triggerNode: TriggerNode;
 let sendMessageNode: SendMessageNode;
 let sendCannedResponseNode: SendCannedResponseNode;
+let sendEmailTeamNode: SendEmailTeamNode;
+let assignToPipelineNode: AssignToPipelineNode;
 let sendTranscriptNode: SendTranscriptNode;
 let assignAgentNode: AssignAgentNode;
 let assignTeamNode: AssignTeamNode;
@@ -164,7 +171,6 @@ let assignBotNode: AssignBotNode;
 let muteConversationNode: MuteConversationNode;
 let resolveConversationNode: ResolveConversationNode;
 let snoozeConversationNode: SnoozeConversationNode;
-let deferConversationNode: DeferConversationNode;
 let changePriorityNode: ChangePriorityNode;
 let scheduledActionNode: ScheduledActionNode;
 
@@ -235,6 +241,17 @@ function getSendCannedResponseNode() {
   return sendCannedResponseNode;
 }
 
+function getSendEmailTeamNode() {
+  if (!sendEmailTeamNode) sendEmailTeamNode = new SendEmailTeamNode();
+  return sendEmailTeamNode;
+}
+
+function getAssignToPipelineNode() {
+  if (!assignToPipelineNode)
+    assignToPipelineNode = new AssignToPipelineNode();
+  return assignToPipelineNode;
+}
+
 function getSendTranscriptNode() {
   if (!sendTranscriptNode) sendTranscriptNode = new SendTranscriptNode();
   return sendTranscriptNode;
@@ -268,12 +285,6 @@ function getResolveConversationNode() {
 function getSnoozeConversationNode() {
   if (!snoozeConversationNode) snoozeConversationNode = new SnoozeConversationNode();
   return snoozeConversationNode;
-}
-
-function getDeferConversationNode() {
-  if (!deferConversationNode)
-    deferConversationNode = new DeferConversationNode();
-  return deferConversationNode;
 }
 
 function getChangePriorityNode() {
@@ -438,6 +449,18 @@ export const actionNodeActivities: ActionNodeActivities = {
     return await getSendCannedResponseNode().execute(input);
   },
 
+  async executeSendEmailTeamNode(
+    input: SendEmailTeamNodeInput,
+  ): Promise<NodeExecutionResult> {
+    return await getSendEmailTeamNode().execute(input);
+  },
+
+  async executeAssignToPipelineNode(
+    input: AssignToPipelineNodeInput,
+  ): Promise<NodeExecutionResult> {
+    return await getAssignToPipelineNode().execute(input);
+  },
+
   async executeSendTranscriptNode(
     input: SendTranscriptNodeInput,
   ): Promise<NodeExecutionResult> {
@@ -478,12 +501,6 @@ export const actionNodeActivities: ActionNodeActivities = {
     input: SnoozeConversationNodeInput,
   ): Promise<NodeExecutionResult> {
     return await getSnoozeConversationNode().execute(input);
-  },
-
-  async executeDeferConversationNode(
-    input: DeferConversationNodeInput,
-  ): Promise<NodeExecutionResult> {
-    return await getDeferConversationNode().execute(input);
   },
 
   async executeChangePriorityNode(

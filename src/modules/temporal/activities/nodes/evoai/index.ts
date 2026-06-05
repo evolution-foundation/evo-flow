@@ -10,5 +10,8 @@ export * from './assignment';
 // Communication Nodes
 export * from './communication';
 
+// Pipeline Nodes
+export * from './pipeline';
+
 // Base CRM Service — promoted to src/shared/crm-client/ as CrmClientService.
 // (See: tech-spec evo-flow-q3-promote-crm-client.)

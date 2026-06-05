@@ -27,15 +27,12 @@ export class SendCannedResponseNode extends BaseNode {
     return this.crmService;
   }
 
-  // The CRM exposes no `show` route for canned responses, so resolve the
-  // content from the list endpoint and match by id client-side.
   private async resolveContent(cannedId: string): Promise<string | null> {
-    const response = await this.getCrmService().getCannedResponses();
+    const response = await this.getCrmService().getCannedResponse(cannedId);
     if (!response.success) return null;
     const raw = response.data;
-    const list: any[] = Array.isArray(raw) ? raw : (raw?.data ?? []);
-    const match = list.find((c) => String(c?.id) === String(cannedId));
-    return match?.content ?? null;
+    const canned = raw?.data ?? raw;
+    return canned?.content ?? null;
   }
 
   async execute(
