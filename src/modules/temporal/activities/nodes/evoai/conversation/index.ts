@@ -5,5 +5,4 @@ export * from './mute-conversation.node';
 export * from './resolve-conversation.node';
 export * from './snooze-conversation.node';
 export * from './change-priority.node';
-// TODO: Implement defer-conversation.node (if different from snooze)
-// export * from './defer-conversation.node';
+export * from './defer-conversation.node';

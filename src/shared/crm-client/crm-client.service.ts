@@ -726,6 +726,18 @@ export class CrmClientService {
     );
   }
 
+  async getCannedResponses(): Promise<CrmApiResponse<any>> {
+    // The index is paginated (default page_size 20) and the CRM exposes no
+    // `show` route, so request a generous page to resolve a canned response by
+    // id client-side. A dedicated show route is a follow-up (EVO-1634).
+    const url = `${this.baseURL}/api/v1/canned_responses?pageSize=200`;
+    return this.executeRequest(
+      url,
+      { method: 'GET' },
+      { nodeType: 'get-canned-responses', conversationId: 'n/a' },
+    );
+  }
+
   async createScheduledAction(
     contactId: string,
     actionType: string,

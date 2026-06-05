@@ -669,6 +669,7 @@ export async function JourneyExecutionWorkflow(
             break;
 
           case 'removeLabel':
+          case 'remove-label-node': // Support both naming conventions
             nodeResult = await actionNodeActivities.executeRemoveLabelNode({
               nodeId: currentNode.id,
               contactId: input.contactId,
@@ -799,6 +800,18 @@ export async function JourneyExecutionWorkflow(
             // });
             break;
 
+          case 'send-canned-response-node':
+            nodeResult =
+              await actionNodeActivities.executeSendCannedResponseNode({
+                nodeId: currentNode.id,
+                conversationId:
+                  input.triggerEvent?.properties?.conversation_id || undefined,
+                sessionId: input.sessionId,
+                contactId: input.contactId,
+                nodeData: currentNode.data,
+              });
+            break;
+
           case 'send-transcript-node':
             nodeResult = await actionNodeActivities.executeSendTranscriptNode({
               nodeId: currentNode.id,
@@ -866,6 +879,17 @@ export async function JourneyExecutionWorkflow(
           case 'snooze-conversation-node':
             nodeResult =
               await actionNodeActivities.executeSnoozeConversationNode({
+                nodeId: currentNode.id,
+                conversationId:
+                  input.triggerEvent?.properties?.conversation_id || '',
+                sessionId: input.sessionId,
+                nodeData: currentNode.data,
+              });
+            break;
+
+          case 'defer-conversation-node':
+            nodeResult =
+              await actionNodeActivities.executeDeferConversationNode({
                 nodeId: currentNode.id,
                 conversationId:
                   input.triggerEvent?.properties?.conversation_id || '',
