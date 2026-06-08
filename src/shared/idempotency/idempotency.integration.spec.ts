@@ -22,10 +22,10 @@ describeIntegration('IdempotencyService (integration)', () => {
   let control: Redis;
   const stamp = Date.now();
 
-  beforeAll(async () => {
+  beforeAll(() => {
     metrics = new IdempotencyMetrics();
     service = new IdempotencyService(metrics);
-    await service.onModuleInit();
+    service.onModuleInit();
 
     const config = getProcessingConfig();
     control = new Redis({

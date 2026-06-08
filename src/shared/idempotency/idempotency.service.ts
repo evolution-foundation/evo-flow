@@ -48,8 +48,11 @@ export class IdempotencyService implements OnModuleInit, OnModuleDestroy {
 
   constructor(private readonly metrics: IdempotencyMetrics) {}
 
-  async onModuleInit(): Promise<void> {
+  onModuleInit(): void {
     const config = getProcessingConfig();
+    // lazyConnect: the socket opens on the first command, not at boot — so a
+    // Redis outage at boot does not crash run-modes that never use idempotency
+    // (this @Global module loads in every mode; only story 3.5 actually uses it).
     const redis = new Redis({
       host: config.redis?.host ?? 'localhost',
       port: config.redis?.port ?? 6379,
@@ -58,7 +61,6 @@ export class IdempotencyService implements OnModuleInit, OnModuleDestroy {
       maxRetriesPerRequest: 3,
       enableReadyCheck: true,
       lazyConnect: true,
-      enableOfflineQueue: false,
     }) as IdempotencyRedis;
 
     redis.defineCommand('idempotencyCheckAndMark', {
@@ -70,10 +72,9 @@ export class IdempotencyService implements OnModuleInit, OnModuleDestroy {
       lua: RELEASE_LOCK_LUA,
     });
 
-    await redis.connect();
     this.redis = redis;
-    this.logger.log('idempotency.boot', {
-      action: 'idempotency.boot',
+    this.logger.log('idempotency.ready', {
+      action: 'idempotency.ready',
       db: redis.options.db,
     });
   }

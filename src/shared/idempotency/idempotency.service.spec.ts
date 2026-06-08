@@ -23,7 +23,7 @@ describe('IdempotencyService', () => {
   let metrics: IdempotencyMetrics;
   let service: IdempotencyService;
 
-  beforeEach(async () => {
+  beforeEach(() => {
     mockRedis = {
       defineCommand: jest.fn(),
       connect: jest.fn().mockResolvedValue(undefined),
@@ -36,7 +36,7 @@ describe('IdempotencyService', () => {
     mockRedisCtor.mockImplementation(() => mockRedis);
     metrics = new IdempotencyMetrics();
     service = new IdempotencyService(metrics);
-    await service.onModuleInit();
+    service.onModuleInit();
   });
 
   afterEach(async () => {
@@ -44,7 +44,7 @@ describe('IdempotencyService', () => {
     jest.restoreAllMocks();
   });
 
-  it('registers both Lua commands and connects on init', () => {
+  it('registers both Lua commands on init without connecting eagerly (lazy)', () => {
     expect(mockRedis.defineCommand).toHaveBeenCalledWith(
       'idempotencyCheckAndMark',
       expect.objectContaining({ numberOfKeys: 1 }),
@@ -53,7 +53,8 @@ describe('IdempotencyService', () => {
       'idempotencyReleaseLock',
       expect.objectContaining({ numberOfKeys: 1 }),
     );
-    expect(mockRedis.connect).toHaveBeenCalledTimes(1);
+    // lazyConnect: no boot-time connect — the socket opens on first command.
+    expect(mockRedis.connect).not.toHaveBeenCalled();
   });
 
   it('computeHash returns a stable SHA256 hex', () => {
