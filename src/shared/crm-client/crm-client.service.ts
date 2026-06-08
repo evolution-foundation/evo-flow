@@ -2,7 +2,6 @@ import {
   BadRequestException,
   Injectable,
   NotFoundException,
-  ServiceUnavailableException,
   UnauthorizedException,
 } from '@nestjs/common';
 import { Logger } from '@nestjs/common';
@@ -14,6 +13,12 @@ import {
   CircuitBreakerState,
 } from '../../modules/processing/resilience/circuit-breaker';
 import { getCrmClientConfig } from './crm-client.config';
+import { ContactsClientUnavailableException } from './contacts-client-unavailable.exception';
+import {
+  contactsClientMetrics,
+  type ContactsClientTerminalReason,
+} from './contacts-client.metrics';
+import { readCorrelationIdFromCls } from '../correlation/correlation.util';
 import type { RequestOptions } from './types/responses';
 
 export interface CrmApiResponse<T = any> {
@@ -45,15 +50,21 @@ export interface CrmConversationContext {
  * failures, recovery=60s. State shared across all `new CrmClientService()`
  * instantiations and DI-managed singletons.
  *
- * Status mapping:
+ * Generic-path hardening (EVO-1205): the generic get/post/patch/delete methods
+ * enforce a 5s timeout and retry 5xx/network/429 up to 3 times with backoff
+ * (1s, 2s, 4s). 4xx are never retried. On exhaustion they throw
+ * `ContactsClientUnavailableException` (a 503 carrying correlationId + debug
+ * context) and emit `contacts_client_*` Prometheus counters. See README.
+ *
+ * Status mapping (generic path):
  *  - 200/201/204 → returns data (and caches GET).
  *  - 404 GET → returns `null`.
  *  - 404 write → throws `NotFoundException`.
  *  - 401 → `UnauthorizedException`.
  *  - 422 → `BadRequestException` (with response body).
- *  - 429 → respects `Retry-After`; after exhausting retries → `ServiceUnavailableException`.
- *  - 5xx / network → trips circuit breaker → `ServiceUnavailableException`.
- *  - Circuit OPEN → `ServiceUnavailableException` immediately.
+ *  - 429 → respects `Retry-After`; after exhausting retries → `ContactsClientUnavailableException`.
+ *  - 5xx / network / timeout → retried, then → `ContactsClientUnavailableException`.
+ *  - Circuit OPEN → `ContactsClientUnavailableException` immediately.
  *
  * Auth (s2s default): header `X-Service-Token: <EVOAI_CRM_API_TOKEN>` —
  * matches the wire format already in use by the existing temporal nodes.
@@ -71,25 +82,23 @@ export class CrmClientService {
     ttl: getCrmClientConfig().cacheTtlMs,
   });
 
-  private static readonly circuitBreaker = new CircuitBreaker(
-    'crm-client',
-    {
-      failureThreshold: getCrmClientConfig().circuitThreshold,
-      recoveryTimeout: getCrmClientConfig().circuitRecoveryMs,
-      // We manage per-request timeouts via AbortController inside the loop,
-      // and the loop may need >10s (retries + Retry-After). Use a generous
-      // upper bound for the breaker-level timeout so it doesn't pre-empt
-      // legitimate retry cycles.
-      timeout: 300_000,
-    },
-  );
+  private static readonly circuitBreaker = new CircuitBreaker('crm-client', {
+    failureThreshold: getCrmClientConfig().circuitThreshold,
+    recoveryTimeout: getCrmClientConfig().circuitRecoveryMs,
+    // We manage per-request timeouts via AbortController inside the loop,
+    // and the loop may need >10s (retries + Retry-After). Use a generous
+    // upper bound for the breaker-level timeout so it doesn't pre-empt
+    // legitimate retry cycles.
+    timeout: 300_000,
+  });
 
   private static readonly logger = new Logger('CrmClientService');
 
   private readonly baseURL: string;
   private readonly serviceToken: string;
   private readonly timeout: number;
-  private readonly retryMaxAttempts: number;
+  private readonly genericTimeout: number;
+  private readonly genericBackoffMs: number[];
   private readonly cls?: ClsService;
 
   constructor(cls?: ClsService) {
@@ -97,7 +106,8 @@ export class CrmClientService {
     this.baseURL = config.baseUrl;
     this.serviceToken = config.apiToken;
     this.timeout = config.timeoutMs;
-    this.retryMaxAttempts = config.retryMaxAttempts;
+    this.genericTimeout = config.genericTimeoutMs;
+    this.genericBackoffMs = config.genericRetryBackoffMs;
     this.cls = cls;
 
     CrmClientService.logger.log(
@@ -145,7 +155,12 @@ export class CrmClientService {
   }
 
   async delete<T = void>(path: string, opts?: RequestOptions): Promise<T> {
-    const result = await this.requestGeneric<T>('DELETE', path, undefined, opts);
+    const result = await this.requestGeneric<T>(
+      'DELETE',
+      path,
+      undefined,
+      opts,
+    );
     return result as T;
   }
 
@@ -180,14 +195,20 @@ export class CrmClientService {
       }
     }
 
+    const endpoint = `${method} ${path}`;
+
     // Pre-check: if circuit is already OPEN, fail fast with a clean exception.
     if (
       CrmClientService.circuitBreaker.getStats().state ===
       CircuitBreakerState.OPEN
     ) {
-      throw new ServiceUnavailableException(
-        'CRM service unavailable (circuit open)',
-      );
+      contactsClientMetrics.incTerminalFailure('circuit_open');
+      throw new ContactsClientUnavailableException({
+        correlationId: readCorrelationIdFromCls(),
+        endpoint,
+        reason: 'circuit_open',
+        totalLatencyMs: 0,
+      });
     }
 
     const url = path.startsWith('http')
@@ -202,7 +223,17 @@ export class CrmClientService {
       requestInit.body = JSON.stringify(body);
     }
 
-    const maxRetries = this.retryMaxAttempts;
+    // Hardened generic path (EVO-1205): fixed 5s timeout + up to N retries on
+    // 5xx/network/429 with an explicit backoff schedule (1s, 2s, 4s). 4xx are
+    // not retried. On exhaustion we throw ContactsClientUnavailableException
+    // carrying the correlationId + debug context, and emit Prometheus counters.
+    const backoff = this.genericBackoffMs;
+    const maxRetries = backoff.length;
+    const effectiveTimeout = opts?.timeoutMs ?? this.genericTimeout;
+    const startedAt = Date.now();
+
+    let lastStatusCode: number | undefined;
+    let terminalReason: ContactsClientTerminalReason = 'network';
 
     // Phase 1: transport + 5xx + retry loop, wrapped in the circuit breaker.
     // Returns the final Response (client-classified or success), or throws
@@ -213,9 +244,9 @@ export class CrmClientService {
         async () => {
           let lastTransportError: Error = new Error('Unknown error');
 
-          for (let attempt = 1; attempt <= maxRetries; attempt++) {
+          // attempt 0 = initial try; attempts 1..maxRetries = retries.
+          for (let attempt = 0; attempt <= maxRetries; attempt++) {
             const controller = new AbortController();
-            const effectiveTimeout = opts?.timeoutMs ?? this.timeout;
             const timeoutId = setTimeout(
               () => controller.abort(),
               effectiveTimeout,
@@ -229,21 +260,27 @@ export class CrmClientService {
               });
             } catch (networkErr: any) {
               clearTimeout(timeoutId);
+              const isTimeout = networkErr?.name === 'AbortError';
               lastTransportError = networkErr;
+              terminalReason = isTimeout ? 'timeout' : 'network';
+              if (isTimeout) contactsClientMetrics.incTimeout();
               CrmClientService.logger.error(
-                `CRM API network failure [Attempt ${attempt}] ${JSON.stringify({
+                `CRM API ${isTimeout ? 'timeout' : 'network failure'} [Attempt ${
+                  attempt + 1
+                }] ${JSON.stringify({
                   url,
                   method,
                   error: networkErr?.message ?? String(networkErr),
-                  attempt,
+                  attempt: attempt + 1,
                 })}`,
               );
               if (attempt < maxRetries) {
-                const waitTime = Math.min(
-                  1000 * Math.pow(2, attempt - 1),
-                  10_000,
+                contactsClientMetrics.incRetry(
+                  isTimeout ? 'timeout' : 'network',
                 );
-                await new Promise((resolve) => setTimeout(resolve, waitTime));
+                await new Promise((resolve) =>
+                  setTimeout(resolve, backoff[attempt]),
+                );
                 continue;
               }
               throw networkErr;
@@ -252,15 +289,16 @@ export class CrmClientService {
 
             // 5xx → retry with backoff; throw final to count as circuit failure.
             if (attemptResponse.status >= 500) {
+              lastStatusCode = attemptResponse.status;
+              terminalReason = 'server_error';
               lastTransportError = new Error(
                 `CRM service error (${attemptResponse.status})`,
               );
               if (attempt < maxRetries) {
-                const waitTime = Math.min(
-                  1000 * Math.pow(2, attempt - 1),
-                  10_000,
+                contactsClientMetrics.incRetry('server_error');
+                await new Promise((resolve) =>
+                  setTimeout(resolve, backoff[attempt]),
                 );
-                await new Promise((resolve) => setTimeout(resolve, waitTime));
                 continue;
               }
               throw lastTransportError;
@@ -268,19 +306,29 @@ export class CrmClientService {
 
             // 429 → respect Retry-After; if exhausted, treat as transport failure.
             if (attemptResponse.status === 429) {
+              lastStatusCode = 429;
+              terminalReason = 'rate_limited';
               const retryAfter = attemptResponse.headers.get('Retry-After');
-              const waitTime = retryAfter
+              const retryAfterMs = retryAfter
                 ? parseInt(retryAfter, 10) * 1000
-                : 5_000;
+                : NaN;
+              // Retry-After may be an HTTP-date (NaN here) — fall back to the
+              // backoff schedule rather than scheduling an immediate retry.
+              const waitTime = Number.isFinite(retryAfterMs)
+                ? retryAfterMs
+                : backoff[attempt];
 
               if (attempt < maxRetries) {
+                contactsClientMetrics.incRetry('rate_limited');
                 CrmClientService.logger.warn(
-                  `CRM API rate limited, retrying in ${waitTime}ms ${JSON.stringify({
-                    attempt,
-                    maxRetries,
-                    method,
-                    path,
-                  })}`,
+                  `CRM API rate limited, retrying in ${waitTime}ms ${JSON.stringify(
+                    {
+                      attempt: attempt + 1,
+                      maxRetries,
+                      method,
+                      path,
+                    },
+                  )}`,
                 );
                 await new Promise((resolve) => setTimeout(resolve, waitTime));
                 continue;
@@ -295,11 +343,17 @@ export class CrmClientService {
           throw lastTransportError;
         },
       );
-    } catch (transportError: any) {
-      // Network / 5xx / rate-limit-exhausted / circuit OPEN — unavailable.
-      throw new ServiceUnavailableException(
-        `CRM request failed: ${transportError?.message ?? String(transportError)}`,
-      );
+    } catch {
+      // Network / timeout / 5xx / rate-limit-exhausted / circuit OPEN — the CRM
+      // is unavailable after the full retry budget. Surface the rich exception.
+      contactsClientMetrics.incTerminalFailure(terminalReason);
+      throw new ContactsClientUnavailableException({
+        correlationId: readCorrelationIdFromCls(),
+        endpoint,
+        lastStatusCode,
+        totalLatencyMs: Date.now() - startedAt,
+        reason: terminalReason,
+      });
     }
 
     // Phase 2: interpret the response (server is healthy from the breaker's POV).
@@ -481,11 +535,13 @@ export class CrmClientService {
 
             if (attempt < maxRetries) {
               CrmClientService.logger.warn(
-                `CRM API rate limited, retrying in ${waitTime}ms ${JSON.stringify({
-                  attempt,
-                  maxRetries,
-                  nodeType: context.nodeType,
-                })}`,
+                `CRM API rate limited, retrying in ${waitTime}ms ${JSON.stringify(
+                  {
+                    attempt,
+                    maxRetries,
+                    nodeType: context.nodeType,
+                  },
+                )}`,
               );
               await new Promise((resolve) => setTimeout(resolve, waitTime));
               continue;
@@ -726,7 +782,9 @@ export class CrmClientService {
     );
   }
 
-  async getCannedResponse(cannedResponseId: string): Promise<CrmApiResponse<any>> {
+  async getCannedResponse(
+    cannedResponseId: string,
+  ): Promise<CrmApiResponse<any>> {
     const url = `${this.baseURL}/api/v1/canned_responses/${cannedResponseId}`;
     return this.executeRequest(
       url,

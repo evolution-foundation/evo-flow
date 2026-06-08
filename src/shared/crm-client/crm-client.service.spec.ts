@@ -26,6 +26,11 @@ process.env.EVOAI_CRM_BASE_URL = 'http://crm-test.local';
 process.env.EVOAI_CRM_API_TOKEN = 'svc-token';
 process.env.EVOAI_CRM_RETRY_MAX_ATTEMPTS = '2';
 process.env.EVOAI_CRM_CIRCUIT_THRESHOLD = '3';
+// Generic-path hardening (EVO-1205): single zero-delay retry keeps these
+// status-mapping cases fast. The (1s, 2s, 4s) schedule + the dedicated
+// ContactsClientUnavailableException contract are covered in
+// crm-client.hardening.spec.ts.
+process.env.EVOAI_CRM_CLIENT_RETRY_BACKOFF_MS = '0';
 
 import { CrmClientService } from './crm-client.service';
 
