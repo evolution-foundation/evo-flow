@@ -11,6 +11,7 @@ import {
   mapContactDto,
   type HydratedContact,
 } from '../../../shared/crm-client/types/contact';
+import { CrmInboxDispatcher } from '../../../shared/messaging-channels/dispatchers/crm-inbox.dispatcher';
 
 export interface SendMessageInput {
   campaignId: string;
@@ -29,25 +30,6 @@ export interface SendMessageResult {
   statusCode?: number;
 }
 
-export interface CrmMessagePayload {
-  source_id: string;
-  inbox_id: string;
-  contact_id: string;
-  status?: string;
-  message: {
-    content: string;
-    message_type?: string;
-    private?: boolean;
-    content_attributes?: Record<string, any>;
-    template_params?: {
-      name: string;
-      category?: string;
-      language?: string;
-      processed_params?: Record<string, any>;
-    };
-  };
-}
-
 /**
  * Service for sending campaign messages through EvoAI CRM inboxes
  * Supports WhatsApp, Email, SMS channels with templates and rate limiting
@@ -55,9 +37,6 @@ export interface CrmMessagePayload {
 @Injectable()
 export class CampaignMessageSenderService {
   private readonly logger = new Logger(CampaignMessageSenderService.name);
-  private readonly baseURL: string;
-  private readonly serviceToken: string;
-  private readonly timeout: number = 30000; // 30 seconds
 
   // Rate limiting trackers (in-memory, could be moved to Redis for distributed systems)
   private rateLimiters: Map<string, { count: number; windowStart: number }> =
@@ -68,17 +47,8 @@ export class CampaignMessageSenderService {
     private readonly db: TenantDbContext,
     private readonly configService: ConfigService,
     private readonly contactsClient: ContactsClientService,
-  ) {
-    this.baseURL =
-      this.configService.get<string>('EVOAI_CRM_BASE_URL') ||
-      'http://localhost:3000';
-    this.serviceToken =
-      this.configService.get<string>('EVOAI_CRM_API_TOKEN') || '';
-
-    if (!this.serviceToken) {
-      this.logger.warn('EVOAI_CRM_API_TOKEN not configured');
-    }
-  }
+    private readonly crmInboxDispatcher: CrmInboxDispatcher,
+  ) {}
 
   private get campaignRepository(): Repository<Campaign> {
     return this.db.getRepository(Campaign);
@@ -169,14 +139,21 @@ export class CampaignMessageSenderService {
         campaign,
       );
 
-      // Create conversation and send message
-      const result = await this.createConversationAndSendMessage({
+      // Create conversation and send message via the extracted dispatcher
+      const dispatchResult = await this.crmInboxDispatcher.dispatch({
         contactId: input.contactId,
         inboxId: input.inboxId,
         content: messageContent.content,
         campaignId: input.campaignId,
         templateParams: messageContent.templateParams,
       });
+      const result: SendMessageResult = {
+        success: dispatchResult.success,
+        messageId: dispatchResult.messageId,
+        conversationId: dispatchResult.conversationId,
+        error: dispatchResult.error?.message,
+        statusCode: dispatchResult.statusCode,
+      };
 
       // Update rate limiter
       if (campaign.isRateLimit && result.success) {
@@ -321,152 +298,6 @@ export class CampaignMessageSenderService {
     });
 
     return processedContent;
-  }
-
-  /**
-   * Create conversation and send message via EvoAI CRM API
-   */
-  private async createConversationAndSendMessage(params: {
-    contactId: string;
-    inboxId: string;
-    content: string;
-    campaignId: string;
-    templateParams?: {
-      name: string;
-      category?: string;
-      language?: string;
-      processed_params?: Record<string, any>;
-    };
-  }): Promise<SendMessageResult> {
-    const url = `${this.baseURL}/api/v1/conversations`;
-
-    const payload: CrmMessagePayload = {
-      source_id: `campaign_${params.campaignId}_${Date.now()}`,
-      inbox_id: params.inboxId,
-      contact_id: params.contactId,
-      status: 'open',
-      message: {
-        content: params.content,
-        message_type: params.templateParams ? 'outgoing' : 'outgoing',
-        private: false,
-        content_attributes: {
-          campaign_id: params.campaignId,
-          sent_at: new Date().toISOString(),
-        },
-        ...(params.templateParams && {
-          template_params: params.templateParams,
-        }),
-      },
-    };
-
-    try {
-      const response = await this.executeRequest(url, {
-        method: 'POST',
-        headers: this.getHeaders(),
-        body: JSON.stringify(payload),
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        this.logger.error('CRM API error', {
-          status: response.status,
-          error: errorText,
-        });
-
-        return {
-          success: false,
-          error: `CRM API error: ${response.status} - ${errorText}`,
-          statusCode: response.status,
-        };
-      }
-
-      const data = await response.json();
-
-      return {
-        success: true,
-        conversationId: data.id,
-        messageId: data.messages?.[0]?.id,
-        statusCode: response.status,
-      };
-    } catch (error) {
-      this.logger.error('Failed to send message to CRM', {
-        error: error.message,
-      });
-
-      return {
-        success: false,
-        error: error.message,
-      };
-    }
-  }
-
-  /**
-   * Execute HTTP request with retry logic
-   */
-  private async executeRequest(
-    url: string,
-    options: RequestInit,
-    maxRetries: number = 3,
-  ): Promise<Response> {
-    let lastError: Error = new Error('Unknown error');
-
-    for (let attempt = 1; attempt <= maxRetries; attempt++) {
-      try {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), this.timeout);
-
-        const response = await fetch(url, {
-          ...options,
-          signal: controller.signal,
-        });
-
-        clearTimeout(timeoutId);
-
-        // Handle rate limiting with retry
-        if (response.status === 429 && attempt < maxRetries) {
-          const retryAfter = response.headers.get('Retry-After');
-          const waitTime = retryAfter ? parseInt(retryAfter) * 1000 : 5000;
-
-          this.logger.warn(
-            `Rate limited by CRM API, retrying in ${waitTime}ms`,
-            {
-              attempt,
-              maxRetries,
-            },
-          );
-
-          await new Promise((resolve) => setTimeout(resolve, waitTime));
-          continue;
-        }
-
-        return response;
-      } catch (error) {
-        lastError = error as Error;
-
-        this.logger.warn(`Request failed [Attempt ${attempt}/${maxRetries}]`, {
-          error: error.message,
-        });
-
-        // Wait before retry with exponential backoff
-        if (attempt < maxRetries) {
-          const waitTime = Math.min(1000 * Math.pow(2, attempt - 1), 10000);
-          await new Promise((resolve) => setTimeout(resolve, waitTime));
-        }
-      }
-    }
-
-    throw lastError;
-  }
-
-  /**
-   * Get HTTP headers for CRM API requests
-   */
-  private getHeaders(): Record<string, string> {
-    return {
-      'Content-Type': 'application/json',
-      'X-Service-Token': this.serviceToken,
-      'User-Agent': 'EvoAI-Campaign/1.0',
-    };
   }
 
   /**

@@ -34,6 +34,7 @@ import { AuthClientModule } from './shared/auth-client/auth-client.module';
 import { BrokerModule } from './shared/broker/broker.module';
 import { CorrelationModule } from './shared/correlation/correlation.module';
 import { AudienceModule } from './shared/audience/audience.module';
+import { MessagingChannelsModule } from './shared/messaging-channels/messaging-channels.module';
 import { EventReceiverModule } from './runners/event-receiver/event-receiver.module';
 import { AppFactory } from './app-factory';
 import {
@@ -82,6 +83,7 @@ export class AppModule {
       AuthClientModule,
       BrokerModule,
       AudienceModule,
+      MessagingChannelsModule,
     ];
 
     const conditionalImports: Array<DynamicModule | Type> = [];
