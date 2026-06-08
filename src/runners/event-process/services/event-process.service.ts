@@ -6,6 +6,13 @@ import {
 } from 'src/shared/broker/contracts/events-received.contract';
 
 /**
+ * Thrown when a consumed message is not a valid `events.received` envelope.
+ * It is a permanent (non-retriable) failure — the consumer must drop it
+ * (terminal nack) rather than requeue, or it would redeliver forever.
+ */
+export class InvalidEnvelopeError extends Error {}
+
+/**
  * Stub handler for the webhook event pipeline (story 3.3 / EVO-1208).
  *
  * Validates the inbound `events.received.<platform>` envelope and logs it. The
@@ -20,7 +27,7 @@ export class EventProcessService {
 
   async handle(envelope: unknown): Promise<void> {
     if (!isEventsReceivedContract(envelope)) {
-      throw new Error(
+      throw new InvalidEnvelopeError(
         'event-process received a payload that is not a valid events.received envelope',
       );
     }

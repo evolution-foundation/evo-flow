@@ -1,6 +1,7 @@
 import { EVENTS_RECEIVED_TOPIC_PREFIX } from 'src/shared/broker/contracts/events-received.contract';
 import { BrokerMessage } from 'src/shared/broker/interfaces/message-broker.interface';
 import { EventsReceivedConsumer } from './events-received.consumer';
+import { InvalidEnvelopeError } from './event-process.service';
 
 type Handler = (msg: BrokerMessage) => Promise<void>;
 
@@ -49,7 +50,7 @@ describe('EventsReceivedConsumer', () => {
 
   it('subscribes to the events.received prefix on init', async () => {
     const { consumer, broker } = setup();
-    await consumer.onModuleInit();
+    await consumer.onApplicationBootstrap();
     expect(broker.subscribePattern).toHaveBeenCalledWith(
       EVENTS_RECEIVED_TOPIC_PREFIX,
       expect.any(Function),
@@ -58,7 +59,7 @@ describe('EventsReceivedConsumer', () => {
 
   it('runs the handler under the message correlationId and acks on success', async () => {
     const { consumer, broker, correlation, service, getHandler } = setup();
-    await consumer.onModuleInit();
+    await consumer.onApplicationBootstrap();
     const msg = buildMsg();
 
     await getHandler()!(msg);
@@ -73,15 +74,27 @@ describe('EventsReceivedConsumer', () => {
     expect(broker.nack).not.toHaveBeenCalled();
   });
 
-  it('nacks with requeue when the handler throws', async () => {
+  it('nacks with requeue on a transient (non-validation) failure', async () => {
     const { consumer, broker, service, getHandler } = setup();
     service.handle.mockRejectedValueOnce(new Error('boom'));
-    await consumer.onModuleInit();
+    await consumer.onApplicationBootstrap();
     const msg = buildMsg();
 
     await getHandler()!(msg);
 
     expect(broker.ack).not.toHaveBeenCalled();
     expect(broker.nack).toHaveBeenCalledWith(msg, true);
+  });
+
+  it('drops (terminal nack) an invalid envelope instead of requeuing forever', async () => {
+    const { consumer, broker, service, getHandler } = setup();
+    service.handle.mockRejectedValueOnce(new InvalidEnvelopeError('bad'));
+    await consumer.onApplicationBootstrap();
+    const msg = buildMsg();
+
+    await getHandler()!(msg);
+
+    expect(broker.ack).not.toHaveBeenCalled();
+    expect(broker.nack).toHaveBeenCalledWith(msg, false);
   });
 });
