@@ -17,6 +17,17 @@ export interface IMessageBroker {
     topic: string,
     handler: (msg: BrokerMessage<T>) => Promise<void>,
   ): Promise<void>;
+  /**
+   * Subscribe to every topic under a dot-delimited `prefix` (e.g.
+   * `events.received` → all `events.received.<segment>` topics). Each adapter
+   * maps the prefix to its native wildcard: Kafka to a RegExp consumer
+   * subscription, RabbitMQ to a `<prefix>.#` binding on a shared `<prefix>`
+   * topic exchange (see `EVENTS_RECEIVED_*` in contracts/broker-topics.ts).
+   */
+  subscribePattern<T>(
+    prefix: string,
+    handler: (msg: BrokerMessage<T>) => Promise<void>,
+  ): Promise<void>;
   ack(msg: BrokerMessage): Promise<void>;
   nack(msg: BrokerMessage, requeue?: boolean): Promise<void>;
   /**

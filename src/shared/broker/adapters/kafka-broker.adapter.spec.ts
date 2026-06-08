@@ -669,4 +669,37 @@ describe('KafkaBrokerAdapter', () => {
       await close();
     });
   });
+
+  describe('subscribePattern', () => {
+    it('subscribes with a RegExp under groupId `${RUN_MODE}-${prefix}` and creates no topic', async () => {
+      const { adapter, close } = await buildAdapter({
+        BROKER_TYPE: 'kafka',
+        KAFKA_BROKERS: 'localhost:9092',
+        RUN_MODE: 'event-process',
+      });
+      await (
+        adapter as unknown as { onModuleInit: () => Promise<void> }
+      ).onModuleInit();
+
+      await adapter.subscribePattern('events.received', () =>
+        Promise.resolve(),
+      );
+
+      const k = lastKafka();
+      expect(k.consumerGroupIds).toContain('event-process-events.received');
+
+      const consumer = k.consumers[k.consumers.length - 1];
+      const firstCall = consumer.subscribe.mock.calls[0] as unknown[];
+      const subscribeArg = firstCall[0] as {
+        topics: RegExp[];
+        fromBeginning: boolean;
+      };
+      expect(subscribeArg.fromBeginning).toBe(false);
+      expect(subscribeArg.topics[0]).toBeInstanceOf(RegExp);
+      expect(subscribeArg.topics[0].source).toBe('^events\\.received\\.[^.]+$');
+      // A pattern subscription must not create a topic (cannot create a regex).
+      expect(k.admin.createTopics).not.toHaveBeenCalled();
+      await close();
+    });
+  });
 });

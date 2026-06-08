@@ -202,11 +202,14 @@ function describeBrokerContract(broker: BrokerCase): void {
   afterEach(async () => {
     // Unique per-test names already prevent cross-run drift; this best-effort
     // pass keeps the broker from accumulating dead topics/queues over time.
+    // Generous hook timeout: each cleanup spins up a fresh admin/control
+    // connection, and deleting a non-existent name (e.g. a pattern prefix that
+    // is not a real Kafka topic) still pays the connect + round-trip cost.
     while (pending.length > 0) {
       const scope = pending.pop()!;
       await broker.cleanup(scope.topic, scope.runMode).catch(() => undefined);
     }
-  });
+  }, 30_000);
 
   it('publish + subscribe preserves payload types round-trip', async () => {
     const { topic, runMode } = newScope('roundtrip');
@@ -393,6 +396,37 @@ function describeBrokerContract(broker: BrokerCase): void {
     } finally {
       await consumerA.destroy();
       await consumerB.destroy();
+    }
+  }, 60_000);
+
+  it('subscribePattern fans in every topic under a prefix (wildcard)', async () => {
+    const { topic: prefix, runMode } = newScope('wild');
+    const alpha = `${prefix}.alpha`;
+    const beta = `${prefix}.beta`;
+    // Kafka regex consumers only match topics known at subscribe time / on a
+    // (slow) metadata refresh — pre-create the concrete topics so they exist
+    // before subscribePattern runs. No-op for RabbitMQ (routing-key based).
+    await broker.prepareSinglePartitionTopic(alpha);
+    await broker.prepareSinglePartitionTopic(beta);
+    const h = await broker.factory(runMode);
+    const received: string[] = [];
+
+    try {
+      await h.adapter.subscribePattern<{ seg: string }>(prefix, (msg) => {
+        received.push(msg.payload.seg);
+        return h.adapter.ack(msg);
+      });
+      await sleep(broker.settleMs);
+
+      await h.adapter.publish(alpha, { seg: 'alpha' });
+      await h.adapter.publish(beta, { seg: 'beta' });
+
+      await waitFor(() => received.length >= 2, 25_000);
+      expect([...received].sort()).toEqual(['alpha', 'beta']);
+    } finally {
+      await broker.cleanup(alpha, runMode).catch(() => undefined);
+      await broker.cleanup(beta, runMode).catch(() => undefined);
+      await h.destroy();
     }
   }, 60_000);
 

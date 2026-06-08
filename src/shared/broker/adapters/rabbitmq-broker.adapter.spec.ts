@@ -785,4 +785,57 @@ describe('RabbitMQBrokerAdapter', () => {
       await close();
     });
   });
+
+  describe('subscribePattern', () => {
+    it('binds a durable queue to the shared `<prefix>` topic exchange with `<prefix>.#`', async () => {
+      const { adapter, close } = await buildAdapter({
+        BROKER_TYPE: 'rabbitmq',
+        RABBITMQ_URL: 'amqp://admin:admin@rabbit:5672',
+        RUN_MODE: 'event-process',
+      });
+      await (
+        adapter as unknown as { onModuleInit: () => Promise<void> }
+      ).onModuleInit();
+
+      await adapter.subscribePattern('events.received', () =>
+        Promise.resolve(),
+      );
+
+      const ch = lastConn().channel;
+      expect(ch.assertExchange).toHaveBeenCalledWith(
+        'events.received',
+        'topic',
+        {
+          durable: true,
+        },
+      );
+      expect(ch.bindQueue).toHaveBeenCalledWith(
+        'event-process-events.received',
+        'events.received',
+        'events.received.#',
+      );
+      await close();
+    });
+
+    it('routes a same-instance publish under the pattern prefix to the shared exchange', async () => {
+      const { adapter, close } = await buildAdapter({
+        BROKER_TYPE: 'rabbitmq',
+        RABBITMQ_URL: 'amqp://admin:admin@rabbit:5672',
+        RUN_MODE: 'event-process',
+      });
+      await (
+        adapter as unknown as { onModuleInit: () => Promise<void> }
+      ).onModuleInit();
+
+      await adapter.subscribePattern('events.received', () =>
+        Promise.resolve(),
+      );
+      await adapter.publish('events.received.evolution-api', { foo: 'bar' });
+
+      const publishArgs = lastConn().channel.publish.mock.calls[0] as unknown[];
+      expect(publishArgs[0]).toBe('events.received'); // exchange
+      expect(publishArgs[1]).toBe('events.received.evolution-api'); // routing key
+      await close();
+    });
+  });
 });

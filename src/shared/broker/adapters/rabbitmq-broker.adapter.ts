@@ -18,6 +18,14 @@ type AmqpMessage = NonNullable<
 
 const BROKER_LABEL = 'rabbitmq';
 const DEFAULT_PREFETCH = 100;
+/**
+ * Topic families that publish/subscribe through a single shared `topic`
+ * exchange named after the prefix (routing key = full topic), instead of the
+ * default one-exchange-per-topic model. This is what makes `<prefix>.#`
+ * wildcard fan-in work (EVO-1195 contract; see EVENTS_RECEIVED_RABBITMQ_BINDING).
+ * Scoped to `events.received` on purpose — `campaigns.*` keeps its own model.
+ */
+const SHARED_EXCHANGE_PREFIXES = ['events.received'] as const;
 const CONNECT_RETRY_BUDGET_MS = 30_000;
 const CONNECT_RETRY_MAX_BACKOFF_MS = 15_000;
 const RECONNECT_BUDGET_MS = 5_000;
@@ -28,6 +36,8 @@ type StructuredLogLevel = 'debug' | 'info' | 'warn' | 'error';
 interface SubscriptionState<T = unknown> {
   topic: string;
   queueName: string;
+  exchange: string;
+  bindingKey: string;
   consumerTag: string | null;
   handler: (msg: BrokerMessage<T>) => Promise<void>;
 }
@@ -47,6 +57,10 @@ export class RabbitMQBrokerAdapter
   private channel: AmqpChannel | null = null;
   private readonly subscriptions = new Map<string, SubscriptionState>();
   private readonly declaredExchanges = new Set<string>();
+  // Prefixes registered at runtime via subscribePattern. Unioned with the
+  // static SHARED_EXCHANGE_PREFIXES so a same-process publish under a pattern
+  // prefix also routes through the shared exchange (RUN_MODE=single, tests).
+  private readonly patternPrefixes = new Set<string>();
   private readonly pendingAcks = new WeakMap<BrokerMessage, AmqpAckHandle>();
   private active = false;
   private reconnecting = false;
@@ -132,13 +146,14 @@ export class RabbitMQBrokerAdapter
   async publish<T>(topic: string, payload: T): Promise<void> {
     this.assertActive('publish');
 
-    await this.ensureExchange(topic);
+    const { exchange, routingKey } = this.resolveExchange(topic);
+    await this.ensureExchange(exchange);
 
     const correlationId = randomUUID();
     const messageId = randomUUID();
     const content = Buffer.from(JSON.stringify(payload));
 
-    this.channel!.publish(topic, topic, content, {
+    this.channel!.publish(exchange, routingKey, content, {
       persistent: true,
       contentType: 'application/json',
       messageId,
@@ -171,9 +186,12 @@ export class RabbitMQBrokerAdapter
     }
 
     const queueName = `${this.resolveRunMode(topic)}-${topic}`;
+    const { exchange } = this.resolveExchange(topic);
     const state: SubscriptionState<T> = {
       topic,
       queueName,
+      exchange,
+      bindingKey: topic,
       consumerTag: null,
       handler,
     };
@@ -195,6 +213,42 @@ export class RabbitMQBrokerAdapter
     // consumer uses its own `${runMode}-${topic}` queue and binds it on
     // subscribe. Provisioning only guarantees the exchange + queue exist.
     await this.channel!.assertQueue(topic, { durable: true });
+  }
+
+  async subscribePattern<T>(
+    prefix: string,
+    handler: (msg: BrokerMessage<T>) => Promise<void>,
+  ): Promise<void> {
+    this.assertActive('subscribePattern');
+
+    if (this.subscriptions.has(prefix)) {
+      throw new Error(
+        `RabbitMQBrokerAdapter already has a consumer registered for prefix "${prefix}".`,
+      );
+    }
+
+    // Bind a durable queue to the shared `<prefix>` topic exchange with the
+    // `<prefix>.#` wildcard, so every `<prefix>.<segment>` publish fans in.
+    this.patternPrefixes.add(prefix);
+    const queueName = `${this.resolveRunMode(prefix)}-${prefix}`;
+    const bindingKey = `${prefix}.#`;
+    const state: SubscriptionState<T> = {
+      topic: prefix,
+      queueName,
+      exchange: prefix,
+      bindingKey,
+      consumerTag: null,
+      handler,
+    };
+    this.subscriptions.set(prefix, state as SubscriptionState);
+
+    await this.attachConsumer(state);
+    this.writeStructured('info', 'broker.subscribe.pattern', {
+      broker: BROKER_LABEL,
+      prefix,
+      queueName,
+      bindingKey,
+    });
   }
 
   async ack(msg: BrokerMessage): Promise<void> {
@@ -271,9 +325,13 @@ export class RabbitMQBrokerAdapter
   }
 
   private async attachConsumer<T>(state: SubscriptionState<T>): Promise<void> {
-    await this.ensureExchange(state.topic);
+    await this.ensureExchange(state.exchange);
     await this.channel!.assertQueue(state.queueName, { durable: true });
-    await this.channel!.bindQueue(state.queueName, state.topic, state.topic);
+    await this.channel!.bindQueue(
+      state.queueName,
+      state.exchange,
+      state.bindingKey,
+    );
 
     const { consumerTag } = await this.channel!.consume(
       state.queueName,
@@ -370,10 +428,28 @@ export class RabbitMQBrokerAdapter
     return out;
   }
 
-  private async ensureExchange(topic: string): Promise<void> {
-    if (this.declaredExchanges.has(topic)) return;
-    await this.channel!.assertExchange(topic, 'topic', { durable: true });
-    this.declaredExchanges.add(topic);
+  private async ensureExchange(exchange: string): Promise<void> {
+    if (this.declaredExchanges.has(exchange)) return;
+    await this.channel!.assertExchange(exchange, 'topic', { durable: true });
+    this.declaredExchanges.add(exchange);
+  }
+
+  /**
+   * Map a topic to its `(exchange, routingKey)`. Topics under a shared-exchange
+   * prefix route through a single `<prefix>` exchange (routing key = full
+   * topic) so a `<prefix>.#` binding can fan in; all other topics keep the
+   * one-exchange-per-topic model (exchange = routingKey = topic).
+   */
+  private resolveExchange(topic: string): {
+    exchange: string;
+    routingKey: string;
+  } {
+    const prefix = [...SHARED_EXCHANGE_PREFIXES, ...this.patternPrefixes].find(
+      (p) => topic === p || topic.startsWith(`${p}.`),
+    );
+    return prefix
+      ? { exchange: prefix, routingKey: topic }
+      : { exchange: topic, routingKey: topic };
   }
 
   private resolveRunMode(topic: string): string {

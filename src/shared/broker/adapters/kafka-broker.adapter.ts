@@ -193,6 +193,59 @@ export class KafkaBrokerAdapter
     await this.ensureTopicExists(topic);
   }
 
+  async subscribePattern<T>(
+    prefix: string,
+    handler: (msg: BrokerMessage<T>) => Promise<void>,
+  ): Promise<void> {
+    this.assertActive('subscribePattern');
+
+    const key = `pattern:${prefix}`;
+    if (this.consumers.has(key)) {
+      throw new Error(
+        `KafkaBrokerAdapter already has a consumer registered for pattern "${prefix}".`,
+      );
+    }
+
+    const pattern = new RegExp(`^${this.escapeRegexLiteral(prefix)}\\.[^.]+$`);
+    const groupId = `${this.resolveRunMode(prefix)}-${prefix}`;
+    const consumer = this.kafka!.consumer({ groupId });
+
+    consumer.on(consumer.events.CRASH, (event) => {
+      this.writeStructured('error', 'broker.consumer.crash', {
+        broker: BROKER_LABEL,
+        topic: prefix,
+        groupId,
+        restart: event.payload?.restart,
+        error: event.payload?.error?.message,
+      });
+    });
+
+    await consumer.connect();
+    // RegExp subscription: kafkajs matches the pattern against topics known at
+    // subscribe time and on each metadata refresh. Concrete per-segment topics
+    // are created by the publisher's ensureTopicExists, so we deliberately do
+    // NOT create a topic for the pattern here.
+    await consumer.subscribe({ topics: [pattern], fromBeginning: false });
+
+    await consumer.run({
+      autoCommit: false,
+      eachMessage: async (payload) =>
+        this.dispatchMessage(consumer, payload, handler),
+    });
+
+    this.consumers.set(key, consumer);
+    this.writeStructured('info', 'broker.subscribe.pattern', {
+      broker: BROKER_LABEL,
+      prefix,
+      groupId,
+      pattern: pattern.source,
+    });
+  }
+
+  private escapeRegexLiteral(value: string): string {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  }
+
   async ack(msg: BrokerMessage): Promise<void> {
     const handle = this.pendingAcks.get(msg);
     if (!handle) {
