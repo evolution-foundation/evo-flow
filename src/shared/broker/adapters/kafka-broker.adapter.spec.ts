@@ -331,6 +331,25 @@ describe('KafkaBrokerAdapter', () => {
       await close();
     });
 
+    it('provisionTopic creates the topic via admin.createTopics', async () => {
+      const { adapter, close } = await buildAdapter({
+        BROKER_TYPE: 'kafka',
+        KAFKA_BROKERS: 'localhost:9092',
+      });
+      await (
+        adapter as unknown as { onModuleInit: () => Promise<void> }
+      ).onModuleInit();
+
+      await adapter.provisionTopic('campaigns.pack');
+
+      expect(lastKafka().admin.createTopics).toHaveBeenCalledTimes(1);
+      const call = (
+        lastKafka().admin.createTopics.mock.calls[0] as unknown[]
+      )[0] as CreateTopicsCall;
+      expect(call.topics[0].topic).toBe('campaigns.pack');
+      await close();
+    });
+
     it('treats "topic already exists" as success and caches it', async () => {
       const { adapter, close } = await buildAdapter({
         BROKER_TYPE: 'kafka',

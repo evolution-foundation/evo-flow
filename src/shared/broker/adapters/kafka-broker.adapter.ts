@@ -188,6 +188,11 @@ export class KafkaBrokerAdapter
     });
   }
 
+  async provisionTopic(topic: string): Promise<void> {
+    this.assertActive('provisionTopic');
+    await this.ensureTopicExists(topic);
+  }
+
   async ack(msg: BrokerMessage): Promise<void> {
     const handle = this.pendingAcks.get(msg);
     if (!handle) {

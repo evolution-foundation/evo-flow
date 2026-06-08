@@ -187,6 +187,15 @@ export class RabbitMQBrokerAdapter
     });
   }
 
+  async provisionTopic(topic: string): Promise<void> {
+    this.assertActive('provisionTopic');
+    await this.ensureExchange(topic);
+    await this.channel!.assertQueue(topic, { durable: true });
+    // `<topic>.#` matches the exact routing key AND any sub-segments (e.g.
+    // events.received.<platform>), so the default queue catches both.
+    await this.channel!.bindQueue(topic, topic, `${topic}.#`);
+  }
+
   async ack(msg: BrokerMessage): Promise<void> {
     const handle = this.pendingAcks.get(msg);
     if (!handle) {

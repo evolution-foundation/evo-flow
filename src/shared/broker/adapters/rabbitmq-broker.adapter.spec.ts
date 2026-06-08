@@ -333,6 +333,36 @@ describe('RabbitMQBrokerAdapter', () => {
       await close();
     });
 
+    it('provisionTopic asserts the exchange + default queue + `<topic>.#` binding', async () => {
+      const { adapter, close } = await buildAdapter({
+        BROKER_TYPE: 'rabbitmq',
+        RABBITMQ_URL: 'amqp://admin:admin@rabbit:5672',
+      });
+      await (
+        adapter as unknown as { onModuleInit: () => Promise<void> }
+      ).onModuleInit();
+
+      await adapter.provisionTopic('campaigns.pack');
+
+      const ch = lastConn().channel;
+      expect(ch.assertExchange).toHaveBeenCalledWith(
+        'campaigns.pack',
+        'topic',
+        {
+          durable: true,
+        },
+      );
+      expect(ch.assertQueue).toHaveBeenCalledWith('campaigns.pack', {
+        durable: true,
+      });
+      expect(ch.bindQueue).toHaveBeenCalledWith(
+        'campaigns.pack',
+        'campaigns.pack',
+        'campaigns.pack.#',
+      );
+      await close();
+    });
+
     it('throws when called before onModuleInit (dormant adapter)', async () => {
       const { adapter, close } = await buildAdapter({
         BROKER_TYPE: 'kafka',
