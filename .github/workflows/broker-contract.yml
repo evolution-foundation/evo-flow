@@ -1,0 +1,77 @@
+name: broker contract suite
+
+# Epic 1 quality gate (EVO-1199): runs the parametrized broker contract suite
+# against real Kafka and RabbitMQ so the IMessageBroker abstraction is proven
+# end-to-end. Required on any change under src/shared/broker/** (FR42-FR44).
+#
+# NOTE on "required check": to make this a hard merge gate, mark the
+# `contract` job as a required status check in the branch protection rules for
+# main/develop. Because of the `paths` filter, PRs that don't touch the broker
+# still need the check to report — see the `paths-filter` skip note in
+# src/shared/broker/README.md if you wire it as required org-wide.
+
+on:
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - 'src/shared/broker/**'
+      - 'docker-compose.contract.yml'
+      - '.github/workflows/broker-contract.yml'
+      - 'package.json'
+  push:
+    branches: [main, develop]
+    paths:
+      - 'src/shared/broker/**'
+      - 'docker-compose.contract.yml'
+      - '.github/workflows/broker-contract.yml'
+      - 'package.json'
+
+jobs:
+  contract:
+    name: deterministic contract scenarios (merge gate)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Start brokers
+        run: docker compose -f docker-compose.contract.yml up -d --wait
+      - name: Run broker contract suite
+        env:
+          KAFKA_BROKERS: localhost:9092
+          RABBITMQ_URL: amqp://admin:admin@localhost:5672
+        run: npm run test:contract
+      - name: Tear down brokers
+        if: always()
+        run: docker compose -f docker-compose.contract.yml down -v
+
+  contract-reconnect:
+    name: broker-restart reconnect scenario (non-blocking)
+    runs-on: ubuntu-latest
+    # Heavier and slower: it `docker restart`s each broker mid-test. Kept
+    # non-blocking so a flaky restart never wedges an otherwise-green PR.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Start brokers
+        run: docker compose -f docker-compose.contract.yml up -d --wait
+      - name: Run reconnect scenario
+        env:
+          KAFKA_BROKERS: localhost:9092
+          RABBITMQ_URL: amqp://admin:admin@localhost:5672
+          BROKER_CONTRACT: '1'
+          BROKER_CONTRACT_RESTART: '1'
+        run: npx jest --runInBand broker.contract.spec -t "reconnects and resumes"
+      - name: Tear down brokers
+        if: always()
+        run: docker compose -f docker-compose.contract.yml down -v
