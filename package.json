@@ -30,6 +30,7 @@
     "test:cov": "jest --coverage",
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
     "test:e2e": "jest --config ./test/jest-e2e.json",
+    "test:contract": "BROKER_CONTRACT=1 jest --runInBand broker.contract.spec",
     "lint:tenant-db": "node scripts/check-tenant-db-context.mjs",
     "migration:generate": "typeorm-ts-node-commonjs migration:generate -d src/database/ormconfig.ts",
     "migration:create": "typeorm-ts-node-commonjs migration:create",
