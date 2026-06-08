@@ -16,7 +16,6 @@ parseRunMode(process.env.RUN_MODE);
 // matching entry from this Set.
 const STUB_RUN_MODES = new Set<string>([
   RunMode.CAMPAIGN_SENDER, // wired by downstream campaign-sender story (epic 4)
-  RunMode.EVENT_PROCESS, // wired by downstream event-process story (epic 3)
 ]);
 if (STUB_RUN_MODES.has(process.env.RUN_MODE ?? '')) {
   // Structured JSON to stderr so log collectors (Loki / Datadog) ingest the
