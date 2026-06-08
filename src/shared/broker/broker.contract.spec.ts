@@ -401,6 +401,11 @@ function describeBrokerContract(broker: BrokerCase): void {
     'reconnects and resumes delivery after a broker restart',
     async () => {
       const { topic, runMode } = newScope('reconnect');
+      // Single partition so the committed offset from n1's ack covers n2 after
+      // the restart — otherwise Kafka's round-robin could land n2 on a
+      // partition with no committed offset, which the resumed consumer skips
+      // (latest reset). Same baseline trick as the durability scenario.
+      await broker.prepareSinglePartitionTopic(topic);
       const h = await broker.factory(runMode);
       const deliveries: number[] = [];
 
