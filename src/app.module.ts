@@ -32,6 +32,7 @@ import { BearerAuthGuard } from './auth/bearer-auth.guard';
 import { CrmClientModule } from './shared/crm-client/crm-client.module';
 import { AuthClientModule } from './shared/auth-client/auth-client.module';
 import { BrokerModule } from './shared/broker/broker.module';
+import { IdempotencyModule } from './shared/idempotency/idempotency.module';
 import { CorrelationModule } from './shared/correlation/correlation.module';
 import { AudienceModule } from './shared/audience/audience.module';
 import { EventReceiverModule } from './runners/event-receiver/event-receiver.module';
@@ -81,6 +82,7 @@ export class AppModule {
       CrmClientModule,
       AuthClientModule,
       BrokerModule,
+      IdempotencyModule,
       AudienceModule,
     ];
 
