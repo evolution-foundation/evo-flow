@@ -113,3 +113,27 @@ needs no brokers:
 > (not *success*) on PRs that don't touch the filtered paths. If you make
 > `contract` a required check org-wide, pair it with a `paths-filter` step or a
 > always-runs shim so unrelated PRs aren't blocked.
+
+## Deploy: provisioning topics (EVO-1200)
+
+Adapters create topics lazily on first publish/subscribe, but production should
+provision the broker topology explicitly. Run this **once on the first deploy
+to a fresh cluster, before any pipeline mode starts** (idempotent — safe to
+re-run):
+
+```bash
+BROKER_TYPE=kafka    npm run broker:provision-topics
+BROKER_TYPE=rabbitmq npm run broker:provision-topics
+```
+
+It boots a minimal Nest context with `BrokerModule` and calls
+`IMessageBroker.provisionTopic` for the 7 canonical topics
+(`ALL_CONTRACT_TOPIC_NAMES` + the `events.received` template root):
+
+- **Kafka** — `admin.createTopics` (idempotent; `TOPIC_ALREADY_EXISTS` ignored).
+- **RabbitMQ** — a durable `topic` exchange per name + a default durable queue
+  bound with `<topic>.#` (so the `events.received` exchange also catches the
+  dynamic `events.received.<platform>` routing keys).
+
+Per-platform `events.received.<platform>` topics stay dynamic — the
+event-receiver creates them at runtime.
