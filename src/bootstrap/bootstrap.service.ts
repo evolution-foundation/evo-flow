@@ -113,7 +113,7 @@ export class BootstrapService {
         break;
       case RunMode.EVENT_PROCESS:
         this.logger.log(
-          '⚙️  EVENT PROCESS MODE: Broker-driven event processor (stub — module pending)',
+          '⚙️  EVENT PROCESS MODE: Broker-driven event processor (events.received.* consumer)',
         );
         break;
     }
