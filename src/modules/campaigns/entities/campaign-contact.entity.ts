@@ -9,6 +9,13 @@ import {
 } from 'typeorm';
 import { Campaign } from './campaign.entity';
 
+export enum CampaignContactStatus {
+  PENDING = 'PENDING',
+  SENT = 'SENT',
+  FAILED = 'FAILED',
+  SKIPPED = 'SKIPPED',
+}
+
 @Entity('campaigns_contacts')
 @Index(['campaignId'])
 @Index(['contactId'])
@@ -31,8 +38,12 @@ export class CampaignContact {
   @Column({ name: 'sent_at', type: 'timestamp', nullable: true })
   sentAt?: Date;
 
-  @Column({ length: 50, nullable: true })
-  status?: string;
+  @Column({
+    type: 'enum',
+    enum: CampaignContactStatus,
+    default: CampaignContactStatus.PENDING,
+  })
+  status?: CampaignContactStatus;
 
   @Column({ name: 'batch_sequence', type: 'int', nullable: true })
   batchSequence?: number;

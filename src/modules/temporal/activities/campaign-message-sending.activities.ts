@@ -2,6 +2,7 @@ import { log } from '@temporalio/activity';
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from '../../../app.module';
 import { CampaignMessageSenderService } from '../../campaigns/services/campaign-message-sender.service';
+import { CampaignContactStatus } from '../../campaigns/entities/campaign-contact.entity';
 
 let appContext: any = null;
 
@@ -45,7 +46,9 @@ export async function sendCampaignBatchMessages(input: {
       .createQueryBuilder('cc')
       .where('cc.campaignId = :campaignId', { campaignId: input.campaignId })
       .andWhere('cc.batchSequence = :batchNumber', { batchNumber: input.batchNumber })
-      .andWhere('cc.status = :status', { status: 'pending' })
+      .andWhere('cc.status = :status', {
+        status: CampaignContactStatus.PENDING,
+      })
       .getMany();
 
     if (!contacts || contacts.length === 0) {

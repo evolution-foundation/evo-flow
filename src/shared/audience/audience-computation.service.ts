@@ -1,7 +1,10 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Repository } from 'typeorm';
 import { Campaign } from '../../modules/campaigns/entities/campaign.entity';
-import { CampaignContact } from '../../modules/campaigns/entities/campaign-contact.entity';
+import {
+  CampaignContact,
+  CampaignContactStatus,
+} from '../../modules/campaigns/entities/campaign-contact.entity';
 import { TenantDbContext } from '../../evo-extension-points';
 import { SegmentComputationService } from '../../modules/segments/services/segment-computation.service';
 import { SegmentQueryBuilderService } from './segment-query-builder.service';
@@ -207,7 +210,7 @@ export class AudienceComputationService {
         campaignContactsToInsert.push({
           campaignId: campaign.id,
           contactId: contact.id,
-          status: 'pending',
+          status: CampaignContactStatus.PENDING,
         });
         validContacts++;
       } else {
@@ -437,7 +440,7 @@ export class AudienceComputationService {
       .createQueryBuilder()
       .update(CampaignContact)
       .set({
-        status: 'sent',
+        status: CampaignContactStatus.SENT,
         sentAt: new Date(),
       })
       .where('campaignId = :campaignId', { campaignId })

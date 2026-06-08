@@ -5,6 +5,7 @@ import { AudienceComputationService } from '../../../shared/audience/audience-co
 import { CampaignsService } from '../../campaigns/services/campaigns.service';
 import { Campaign } from '../../campaigns/entities/campaign.entity';
 import { CampaignExecution } from '../../campaigns/entities/campaign-execution.entity';
+import { CampaignContactStatus } from '../../campaigns/entities/campaign-contact.entity';
 import { runActivityInTenantDbContext } from '../tenant-activity-context';
 
 let appContext: any = null;
@@ -224,7 +225,9 @@ export async function getCampaignBatch(
       .andWhere('cc.batchSequence = :batchNumber', {
         batchNumber: input.batchNumber,
       })
-      .andWhere('cc.status = :status', { status: 'pending' })
+      .andWhere('cc.status = :status', {
+        status: CampaignContactStatus.PENDING,
+      })
       .getMany();
 
     log.debug('Campaign batch retrieved', {
@@ -355,7 +358,7 @@ export async function markBatchAsProcessed(
       .createQueryBuilder()
       .update()
       .set({
-        status: 'sent',
+        status: CampaignContactStatus.SENT,
         sentAt: new Date(),
       })
       .where('campaignId = :campaignId', { campaignId })

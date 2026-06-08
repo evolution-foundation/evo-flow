@@ -2,7 +2,10 @@ import { Injectable, Logger } from '@nestjs/common';
 import { Repository } from 'typeorm';
 import Redis from 'ioredis';
 import { Campaign } from '../entities/campaign.entity';
-import { CampaignContact } from '../entities/campaign-contact.entity';
+import {
+  CampaignContact,
+  CampaignContactStatus,
+} from '../entities/campaign-contact.entity';
 import { MessageTemplate } from '../../../shared/entities/message-template.entity';
 import { TenantDbContext } from '../../../evo-extension-points';
 import { ConfigService } from '@nestjs/config';
@@ -167,7 +170,7 @@ export class CampaignMessageSenderService {
             id: input.campaignContactId,
           },
           {
-            status: 'sent',
+            status: CampaignContactStatus.SENT,
             sentAt: new Date(),
           },
         );
@@ -177,7 +180,7 @@ export class CampaignMessageSenderService {
             id: input.campaignContactId,
           },
           {
-            status: 'failed',
+            status: CampaignContactStatus.FAILED,
           },
         );
       }
@@ -197,7 +200,7 @@ export class CampaignMessageSenderService {
             id: input.campaignContactId,
           },
           {
-            status: 'failed',
+            status: CampaignContactStatus.FAILED,
           },
         );
       } catch (updateError) {
