@@ -17,18 +17,17 @@ services:
     environment:
       ZOOKEEPER_CLIENT_PORT: 2181
       ZOOKEEPER_TICK_TIME: 2000
-    healthcheck:
-      test: ["CMD-SHELL", "echo ruok | nc -w 2 localhost 2181 | grep imok"]
-      interval: 5s
-      timeout: 5s
-      retries: 20
 
   kafka:
     image: confluentinc/cp-kafka:7.5.0
     container_name: evo-campaign-kafka
+    # Gate readiness on Kafka's own healthcheck (it only passes once the broker
+    # — and therefore Zookeeper — is fully up). Zookeeper has no healthcheck of
+    # its own because cp-zookeeper does not whitelist the `ruok` 4lw command, so
+    # `echo ruok | nc` reports unhealthy and would wedge `up --wait`.
     depends_on:
       zookeeper:
-        condition: service_healthy
+        condition: service_started
     ports:
       - "9092:9092"
     environment:

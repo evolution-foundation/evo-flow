@@ -30,6 +30,7 @@ jobs:
   contract:
     name: deterministic contract scenarios (merge gate)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -52,6 +53,7 @@ jobs:
   contract-reconnect:
     name: broker-restart reconnect scenario (non-blocking)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     # Heavier and slower: it `docker restart`s each broker mid-test. Kept
     # non-blocking so a flaky restart never wedges an otherwise-green PR.
     continue-on-error: true
