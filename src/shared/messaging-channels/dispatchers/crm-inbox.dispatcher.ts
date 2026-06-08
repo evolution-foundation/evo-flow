@@ -90,7 +90,12 @@ export class CrmInboxDispatcher implements IChannelDispatcher {
 
         return {
           success: false,
-          error: { code: String(response.status), message: errorText },
+          // Preserve the legacy error string verbatim (behavior-preserving
+          // extraction): callers map error.message into SendMessageResult.error.
+          error: {
+            code: String(response.status),
+            message: `CRM API error: ${response.status} - ${errorText}`,
+          },
           statusCode: response.status,
           latencyMs,
         };

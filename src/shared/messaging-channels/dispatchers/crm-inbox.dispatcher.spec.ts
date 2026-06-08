@@ -84,7 +84,10 @@ describe('CrmInboxDispatcher', () => {
     const result = await dispatcher.dispatch(input);
 
     expect(result.success).toBe(false);
-    expect(result.error).toEqual({ code: '422', message: 'Unprocessable' });
+    expect(result.error).toEqual({
+      code: '422',
+      message: 'CRM API error: 422 - Unprocessable',
+    });
     expect(result.statusCode).toBe(422);
   });
 
