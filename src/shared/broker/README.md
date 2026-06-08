@@ -132,8 +132,9 @@ It boots a minimal Nest context with `BrokerModule` and calls
 
 - **Kafka** — `admin.createTopics` (idempotent; `TOPIC_ALREADY_EXISTS` ignored).
 - **RabbitMQ** — a durable `topic` exchange per name + a default durable queue
-  bound with `<topic>.#` (so the `events.received` exchange also catches the
-  dynamic `events.received.<platform>` routing keys).
+  (declared, **not bound**). Consumers bind their own `${runMode}-${topic}`
+  queue on subscribe; binding the default queue here would make it accumulate a
+  copy of every message with no consumer to drain it.
 
 Per-platform `events.received.<platform>` topics stay dynamic — the
 event-receiver creates them at runtime.
