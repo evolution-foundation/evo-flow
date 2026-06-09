@@ -12,7 +12,7 @@ import {
 import { CorrelationContext } from '../../../shared/correlation/correlation.context';
 import { CustomLoggerService } from '../../../common/services/custom-logger.service';
 import { CampaignPackerService } from '../services/campaign-packer.service';
-import { CampaignNotFoundError } from '../errors/campaign-not-found.error';
+import { processWithAckPolicy } from '../../../shared/broker/consumer/process-with-ack-policy';
 
 const LOG_CONTEXT = 'CampaignsPackConsumer';
 
@@ -21,10 +21,10 @@ const LOG_CONTEXT = 'CampaignsPackConsumer';
  * boot and routes each message to `CampaignPackerService`, wrapping processing
  * in the request's `correlationId` so every downstream log carries it.
  *
- * Ack/nack policy:
- *  - success → ack
- *  - campaign not found / malformed payload → nack(requeue=false) (terminal)
- *  - any other (transient) error → nack(requeue=true) (retry)
+ * Ack/nack is delegated to the shared `processWithAckPolicy`: success → ack,
+ * `TerminalError` (campaign not found, invalid audience config, deterministic
+ * DB error) → nack(requeue=false), any other error → nack(requeue=true). A
+ * structurally invalid payload is dropped up-front (no correlationId to bind).
  */
 @Injectable()
 export class CampaignsPackConsumer implements OnModuleInit {
@@ -57,32 +57,19 @@ export class CampaignsPackConsumer implements OnModuleInit {
 
     const payload = msg.payload;
 
-    await this.correlation.runWithCorrelationId(
-      payload.correlationId,
-      async () => {
-        try {
+    await this.correlation.runWithCorrelationId(payload.correlationId, () =>
+      processWithAckPolicy(
+        msg,
+        this.broker,
+        {
+          logger: this.logger,
+          context: LOG_CONTEXT,
+          meta: { campaignId: payload.campaignId },
+        },
+        async () => {
           await this.packer.pack(payload);
-          await this.broker.ack(msg);
-        } catch (err) {
-          if (err instanceof CampaignNotFoundError) {
-            this.logger.warn(
-              `campaign not found (campaignId=${err.campaignId}) — nack(requeue=false)`,
-              LOG_CONTEXT,
-            );
-            await this.broker.nack(msg, false);
-            return;
-          }
-
-          this.logger.error(
-            `campaigns.pack processing failed (campaignId=${payload.campaignId}): ${
-              err instanceof Error ? err.message : String(err)
-            } — nack(requeue=true)`,
-            err instanceof Error ? err.stack : undefined,
-            LOG_CONTEXT,
-          );
-          await this.broker.nack(msg, true);
-        }
-      },
+        },
+      ),
     );
   }
 }

@@ -2,10 +2,15 @@ import { Injectable } from '@nestjs/common';
 import { Repository } from 'typeorm';
 import { Campaign } from '../../../modules/campaigns/entities/campaign.entity';
 import { TenantDbContext } from '../../../evo-extension-points';
-import { AudienceComputationService } from '../../../shared/audience/audience-computation.service';
+import {
+  AudienceComputationService,
+  AudienceComputationResult,
+} from '../../../shared/audience/audience-computation.service';
 import { CustomLoggerService } from '../../../common/services/custom-logger.service';
 import type { CampaignsPackContract } from '../../../shared/broker/contracts/campaigns-pack.contract';
 import { CampaignNotFoundError } from '../errors/campaign-not-found.error';
+import { isDeterministicDbError } from '../../../shared/persistence/deterministic-db-error';
+import { DeterministicAudienceError } from '../../../shared/audience/errors/audience.errors';
 
 export interface PackResult {
   audienceSize: number;
@@ -43,7 +48,7 @@ export class CampaignPackerService {
       throw new CampaignNotFoundError(campaignId);
     }
 
-    const result = await this.audience.computeAudience(campaignId);
+    const result = await this.computeAudienceOrClassify(campaignId);
     const audienceSize = result.totalContacts;
 
     this.logger.log('campaign.packed', {
@@ -55,5 +60,25 @@ export class CampaignPackerService {
     });
 
     return { audienceSize };
+  }
+
+  /**
+   * Run audience computation, classifying its failures for the consumer's
+   * ack/nack policy. Invalid segment config already surfaces as a
+   * `TerminalError` (rethrown as-is); a malformed segment SQL rejected by
+   * Postgres is a deterministic DB error and is wrapped terminally so it drops
+   * instead of looping. Everything else is transient and propagates to requeue.
+   */
+  private async computeAudienceOrClassify(
+    campaignId: string,
+  ): Promise<AudienceComputationResult> {
+    try {
+      return await this.audience.computeAudience(campaignId);
+    } catch (err) {
+      if (isDeterministicDbError(err)) {
+        throw new DeterministicAudienceError(campaignId, err);
+      }
+      throw err;
+    }
   }
 }

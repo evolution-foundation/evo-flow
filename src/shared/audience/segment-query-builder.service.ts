@@ -6,6 +6,7 @@ import { Tagging, TaggableType } from '../../modules/labels/entities/tagging.ent
 import { TenantDbContext } from '../../evo-extension-points';
 import { ContactsClientService } from '../crm-client/contacts-client.service';
 import type { HydratedContact } from '../crm-client/types/contact';
+import { AudienceConfigError } from './errors/audience.errors';
 
 export interface SegmentQuery {
   type: 'segment' | 'sql' | 'tags' | 'all';
@@ -125,12 +126,12 @@ export class SegmentQueryBuilderService {
       case 'segment':
         // This will be handled by AudienceComputationService
         // which integrates with SegmentComputationService
-        throw new Error(
+        throw new AudienceConfigError(
           'Segment-based queries should be handled by AudienceComputationService',
         );
 
       default:
-        throw new Error(`Unknown query type: ${query.type}`);
+        throw new AudienceConfigError(`Unknown query type: ${query.type}`);
     }
   }
 
@@ -239,14 +240,14 @@ export class SegmentQueryBuilderService {
     const upperQuery = normalized.toUpperCase();
 
     if (normalized.length === 0) {
-      throw new Error('SQL query is empty');
+      throw new AudienceConfigError('SQL query is empty');
     }
 
     if (normalized.includes(';')) {
-      throw new Error('SQL query cannot contain semicolons');
+      throw new AudienceConfigError('SQL query cannot contain semicolons');
     }
     if (upperQuery.includes('--') || upperQuery.includes('/*')) {
-      throw new Error('SQL query cannot contain SQL comments');
+      throw new AudienceConfigError('SQL query cannot contain SQL comments');
     }
 
     // Check for dangerous keywords
@@ -264,18 +265,20 @@ export class SegmentQueryBuilderService {
 
     for (const keyword of dangerousKeywords) {
       if (upperQuery.includes(keyword)) {
-        throw new Error(`SQL query contains forbidden keyword: ${keyword}`);
+        throw new AudienceConfigError(
+          `SQL query contains forbidden keyword: ${keyword}`,
+        );
       }
     }
 
     // Query must be a SELECT statement
     if (!upperQuery.trim().startsWith('SELECT')) {
-      throw new Error('SQL query must be a SELECT statement');
+      throw new AudienceConfigError('SQL query must be a SELECT statement');
     }
 
     // Query must expose an ID column to join with contacts.
     if (!/\bSELECT\b[\s\S]*\bID\b/i.test(normalized)) {
-      throw new Error('SQL query must select an "id" column');
+      throw new AudienceConfigError('SQL query must select an "id" column');
     }
   }
 
@@ -341,7 +344,7 @@ export class SegmentQueryBuilderService {
     });
 
     if (!segment) {
-      throw new Error(`Segment ${segmentId} not found`);
+      throw new AudienceConfigError(`Segment ${segmentId} not found`);
     }
 
     return segment;

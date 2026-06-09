@@ -4,13 +4,14 @@ import {
   EventsReceivedContract,
   isEventsReceivedContract,
 } from 'src/shared/broker/contracts/events-received.contract';
+import { TerminalError } from 'src/shared/errors/terminal-error';
 
 /**
  * Thrown when a consumed message is not a valid `events.received` envelope.
  * It is a permanent (non-retriable) failure — the consumer must drop it
  * (terminal nack) rather than requeue, or it would redeliver forever.
  */
-export class InvalidEnvelopeError extends Error {}
+export class InvalidEnvelopeError extends TerminalError {}
 
 /**
  * Stub handler for the webhook event pipeline (story 3.3 / EVO-1208).

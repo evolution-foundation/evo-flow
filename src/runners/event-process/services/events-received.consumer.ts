@@ -7,10 +7,8 @@ import {
 } from 'src/shared/broker/interfaces/message-broker.interface';
 import { EVENTS_RECEIVED_TOPIC_PREFIX } from 'src/shared/broker/contracts/events-received.contract';
 import { CorrelationContext } from 'src/shared/correlation/correlation.context';
-import {
-  EventProcessService,
-  InvalidEnvelopeError,
-} from './event-process.service';
+import { processWithAckPolicy } from 'src/shared/broker/consumer/process-with-ack-policy';
+import { EventProcessService } from './event-process.service';
 
 /**
  * Subscribes to the whole `events.received.<platform>` topic family via the
@@ -51,21 +49,13 @@ export class EventsReceivedConsumer implements OnApplicationBootstrap {
     const correlationId = this.correlation.resolveIncoming(
       msg.headers.correlationId,
     );
-    await this.correlation.runWithCorrelationId(correlationId, async () => {
-      try {
-        await this.service.handle(msg.payload);
-        await this.broker.ack(msg);
-      } catch (err) {
-        const terminal = err instanceof InvalidEnvelopeError;
-        this.logger.error('event-process.consume.error', {
-          action: 'event-process.consume.error',
-          correlationId,
-          terminal,
-          error: (err as Error).message,
-        });
-        // Permanent failure → drop (terminal); transient → requeue.
-        await this.broker.nack(msg, !terminal);
-      }
-    });
+    await this.correlation.runWithCorrelationId(correlationId, () =>
+      processWithAckPolicy(
+        msg,
+        this.broker,
+        { logger: this.logger, context: 'EventsReceivedConsumer' },
+        () => this.service.handle(msg.payload),
+      ),
+    );
   }
 }
