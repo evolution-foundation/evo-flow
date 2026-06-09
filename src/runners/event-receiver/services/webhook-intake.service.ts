@@ -8,7 +8,7 @@ import {
   getEventsReceivedTopic,
   isEventsReceivedContract,
 } from '../../../shared/broker/contracts';
-import { CustomLoggerService } from '../../../common/services/custom-logger.service';
+import { StructuredLoggerService } from '../../../shared/logger/structured-logger.service';
 import { PlatformDetectorService } from './platform-detector.service';
 import { PayloadNormalizerService } from './payload-normalizer.service';
 
@@ -35,7 +35,7 @@ export class WebhookIntakeService {
     @Inject(IMESSAGE_BROKER) private readonly broker: IMessageBroker,
     private readonly detector: PlatformDetectorService,
     private readonly normalizer: PayloadNormalizerService,
-    private readonly logger: CustomLoggerService,
+    private readonly logger: StructuredLoggerService,
   ) {}
 
   async intake(payload: WebhookIntakePayload): Promise<void> {

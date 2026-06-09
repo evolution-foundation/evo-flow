@@ -12,7 +12,8 @@ import { WebhooksController } from './controllers/webhooks.controller';
 import { WebhookIntakeService } from './services/webhook-intake.service';
 import { PlatformDetectorService } from './services/platform-detector.service';
 import { PayloadNormalizerService } from './services/payload-normalizer.service';
-import { CustomLoggerService } from '../../common/services/custom-logger.service';
+import { StructuredLoggerService } from '../../shared/logger/structured-logger.service';
+import { PipelineMetricsService } from '../../shared/metrics/pipeline-metrics.service';
 import { CorrelationModule } from '../../shared/correlation/correlation.module';
 import { RequestContextMiddleware } from '../../middlewares/request-context.middleware';
 import { readCorrelationIdFromCls } from '../../shared/correlation/correlation.util';
@@ -46,6 +47,12 @@ describe('event-receiver (integration)', () => {
     error: jest.fn(),
   };
 
+  const metricsMock = {
+    observeRequestDuration: jest.fn(),
+    incThroughput: jest.fn(),
+    incError: jest.fn(),
+  };
+
   @Module({
     imports: [
       ClsModule.forRoot({ global: true, middleware: { mount: false } }),
@@ -56,7 +63,8 @@ describe('event-receiver (integration)', () => {
       WebhookIntakeService,
       PlatformDetectorService,
       PayloadNormalizerService,
-      { provide: CustomLoggerService, useValue: loggerMock },
+      { provide: StructuredLoggerService, useValue: loggerMock },
+      { provide: PipelineMetricsService, useValue: metricsMock },
       { provide: IMESSAGE_BROKER, useValue: brokerMock },
     ],
   })

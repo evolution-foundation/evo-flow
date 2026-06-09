@@ -34,6 +34,8 @@ import { AuthClientModule } from './shared/auth-client/auth-client.module';
 import { BrokerModule } from './shared/broker/broker.module';
 import { IdempotencyModule } from './shared/idempotency/idempotency.module';
 import { CorrelationModule } from './shared/correlation/correlation.module';
+import { LoggerModule } from './shared/logger/logger.module';
+import { PipelineMetricsModule } from './shared/metrics/metrics.module';
 import { AudienceModule } from './shared/audience/audience.module';
 import { MessagingChannelsModule } from './shared/messaging-channels/messaging-channels.module';
 import { EventReceiverModule } from './runners/event-receiver/event-receiver.module';
@@ -80,6 +82,8 @@ export class AppModule {
       // the enterprise overlay contributes the per-request RLS transaction.
       TenantDbContextModule,
       CorrelationModule,
+      LoggerModule,
+      PipelineMetricsModule,
       CrmClientModule,
       AuthClientModule,
       BrokerModule,

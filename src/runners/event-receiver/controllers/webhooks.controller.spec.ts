@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { WebhooksController } from './webhooks.controller';
-import { CustomLoggerService } from '../../../common/services/custom-logger.service';
+import { StructuredLoggerService } from '../../../shared/logger/structured-logger.service';
+import { PipelineMetricsService } from '../../../shared/metrics/pipeline-metrics.service';
 import { WebhookIntakeService } from '../services/webhook-intake.service';
 
 interface ResMock {
@@ -40,13 +41,24 @@ describe('WebhooksController', () => {
   let controller: WebhooksController;
   let logger: { log: jest.Mock; warn: jest.Mock; error: jest.Mock };
   let intake: { intake: jest.Mock };
+  let metrics: {
+    observeRequestDuration: jest.Mock;
+    incThroughput: jest.Mock;
+    incError: jest.Mock;
+  };
 
   beforeEach(() => {
     logger = { log: jest.fn(), warn: jest.fn(), error: jest.fn() };
     intake = { intake: jest.fn().mockResolvedValue(undefined) };
+    metrics = {
+      observeRequestDuration: jest.fn(),
+      incThroughput: jest.fn(),
+      incError: jest.fn(),
+    };
     controller = new WebhooksController(
-      logger as unknown as CustomLoggerService,
+      logger as unknown as StructuredLoggerService,
       intake as unknown as WebhookIntakeService,
+      metrics as unknown as PipelineMetricsService,
     );
   });
 

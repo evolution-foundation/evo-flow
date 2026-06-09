@@ -24,9 +24,9 @@ export class MetricsController {
       },
     },
   })
-  getMetrics(@Response() res: ExpressResponse) {
+  async getMetrics(@Response() res: ExpressResponse) {
     res.set('Content-Type', 'text/plain; version=0.0.4; charset=utf-8');
-    res.send(this.metrics.getMetrics());
+    res.send(await this.metrics.getMetrics());
   }
 
   @Get('health')

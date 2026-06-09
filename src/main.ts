@@ -38,12 +38,22 @@ if (STUB_RUN_MODES.has(process.env.RUN_MODE ?? '')) {
 // Initialize OpenTelemetry BEFORE NestFactory if tracing is enabled
 if (process.env.OTEL_TRACES_ENABLED === 'true') {
   const { NodeSDK } = require('@opentelemetry/sdk-node');
-  const { OTLPTraceExporter } = require('@opentelemetry/exporter-trace-otlp-http');
-  const { HttpInstrumentation } = require('@opentelemetry/instrumentation-http');
-  const { ExpressInstrumentation } = require('@opentelemetry/instrumentation-express');
-  const { NestInstrumentation } = require('@opentelemetry/instrumentation-nestjs-core');
+  const {
+    OTLPTraceExporter,
+  } = require('@opentelemetry/exporter-trace-otlp-http');
+  const {
+    HttpInstrumentation,
+  } = require('@opentelemetry/instrumentation-http');
+  const {
+    ExpressInstrumentation,
+  } = require('@opentelemetry/instrumentation-express');
+  const {
+    NestInstrumentation,
+  } = require('@opentelemetry/instrumentation-nestjs-core');
   const { Resource } = require('@opentelemetry/resources');
-  const { SemanticResourceAttributes } = require('@opentelemetry/semantic-conventions');
+  const {
+    SemanticResourceAttributes,
+  } = require('@opentelemetry/semantic-conventions');
 
   const serviceName = process.env.OTEL_SERVICE_NAME || 'evo-campaign-api';
   const otlpEndpoint = process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
@@ -65,15 +75,26 @@ if (process.env.OTEL_TRACES_ENABLED === 'true') {
     });
 
     sdk.start();
-    console.log(`✅ OpenTelemetry tracing initialized for Tempo: ${otlpEndpoint}`);
+    console.log(
+      `✅ OpenTelemetry tracing initialized for Tempo: ${otlpEndpoint}`,
+    );
   } else {
-    console.warn('⚠️  OTEL_EXPORTER_OTLP_ENDPOINT not set, OpenTelemetry tracing disabled');
+    console.warn(
+      '⚠️  OTEL_EXPORTER_OTLP_ENDPOINT not set, OpenTelemetry tracing disabled',
+    );
   }
 }
 
 import { NestFactory } from '@nestjs/core';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
-import { ValidationPipe, Logger, LogLevel, RequestMethod, HttpException, HttpStatus } from '@nestjs/common';
+import {
+  ValidationPipe,
+  Logger,
+  LogLevel,
+  RequestMethod,
+  HttpException,
+  HttpStatus,
+} from '@nestjs/common';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import { ResponseTransformInterceptor } from './common/interceptors/response-transform.interceptor';
 import { AppFactory } from './app-factory';
@@ -87,6 +108,7 @@ import { SchedulerRegistry } from '@nestjs/schedule';
 import { DataSource } from 'typeorm';
 import { AppModule } from './app.module';
 import { CustomLoggerService } from './common/services/custom-logger.service';
+import { StructuredLoggerService } from './shared/logger/structured-logger.service';
 import { loadExternalExtensions } from './evo-extension-points';
 import axios from 'axios';
 import { json, raw, urlencoded } from 'express';
@@ -102,7 +124,7 @@ async function bootstrap() {
   console.log('  KAFKA_BROKERS:', process.env.KAFKA_BROKERS);
   console.log('  KAFKA_BROKERS_INTERNAL:', process.env.KAFKA_BROKERS_INTERNAL);
   console.log('  Current directory:', process.cwd());
-  
+
   // Override global Logger to add run mode to all logs
   CustomLoggerService.overrideGlobalLogger();
 
@@ -128,6 +150,10 @@ async function bootstrap() {
     // handling instead of letting the default JSON parser reject it first.
     bodyParser: false,
   });
+
+  // Route framework + injected logs through the JSON structured logger so every
+  // record carries correlationId/service/level/timestamp (FR38, NFR32).
+  app.useLogger(app.get(StructuredLoggerService));
 
   // Migration safety guardrail in production.
   if (process.env.NODE_ENV === 'production') {
@@ -279,7 +305,9 @@ async function bootstrap() {
       // For temporal-worker, use ClickHouse singleton to avoid multiple instances
       if (process.env.RUN_MODE === 'temporal-worker') {
         logger.log('🔧 Using ClickHouse singleton for temporal-worker mode...');
-        const { ClickHouseSingleton } = await import('./modules/processing/clickhouse/clickhouse-singleton.service');
+        const { ClickHouseSingleton } = await import(
+          './modules/processing/clickhouse/clickhouse-singleton.service'
+        );
         await ClickHouseSingleton.getInstance();
         logger.log('✅ ClickHouse singleton initialized for temporal-worker');
       } else {

@@ -1,12 +1,14 @@
 import { Controller, Post, Req, Res } from '@nestjs/common';
 import { Request, Response } from 'express';
 import { Public } from '../../../auth/decorators/public.decorator';
-import { CustomLoggerService } from '../../../common/services/custom-logger.service';
+import { StructuredLoggerService } from '../../../shared/logger/structured-logger.service';
+import { PipelineMetricsService } from '../../../shared/metrics/pipeline-metrics.service';
 import { WebhookIntakeService } from '../services/webhook-intake.service';
 
 type RawRequest = Request & { rawBody?: Buffer };
 
 const LOG_CONTEXT = 'WebhooksController';
+const METRICS_ROUTE = 'webhooks';
 
 /**
  * Catch-all webhook receiver (story 3.1 / EVO-1207). Dumb pipe: accepts a
@@ -22,12 +24,27 @@ const LOG_CONTEXT = 'WebhooksController';
 @Public()
 export class WebhooksController {
   constructor(
-    private readonly logger: CustomLoggerService,
+    private readonly logger: StructuredLoggerService,
     private readonly intake: WebhookIntakeService,
+    private readonly metrics: PipelineMetricsService,
   ) {}
 
   @Post('*splat')
   async receive(@Req() req: RawRequest, @Res() res: Response): Promise<void> {
+    const start = process.hrtime.bigint();
+    try {
+      await this.handle(req, res);
+    } catch (error) {
+      this.metrics.incError('unhandled');
+      throw error;
+    } finally {
+      const elapsedSeconds = Number(process.hrtime.bigint() - start) / 1e9;
+      this.metrics.observeRequestDuration(METRICS_ROUTE, elapsedSeconds);
+      this.metrics.incThroughput();
+    }
+  }
+
+  private async handle(req: RawRequest, res: Response): Promise<void> {
     const pathSegment = this.extractPathSegment(req);
     const contentType = String(req.headers['content-type'] ?? '');
     const rawBody = Buffer.isBuffer(req.body) ? req.body : req.rawBody;
@@ -37,6 +54,7 @@ export class WebhooksController {
       // carries the raw body, not the parsed shape, so the result is discarded.
       this.parsePayload(rawBody, contentType);
     } catch {
+      this.metrics.incError('malformed_payload');
       this.logger.warn(
         `Rejected malformed webhook payload (path=${pathSegment}, content-type=${contentType})`,
         LOG_CONTEXT,
@@ -60,6 +78,7 @@ export class WebhooksController {
         sourceIp: this.extractSourceIp(req),
       });
     } catch (error) {
+      this.metrics.incError('intake_failure');
       this.logger.error(
         `Webhook intake failed (path=${pathSegment}): ${
           error instanceof Error ? error.message : String(error)

@@ -253,6 +253,61 @@ Inter-service authentication uses Bearer tokens issued by `evo-auth-service-comm
 
 ---
 
+## Observability — logs and metrics
+
+### Structured logs
+
+Every log record is emitted as a single JSON line to stdout, so a collector
+(Loki / Datadog / `jq`) can parse it without grepping free text. Mandatory
+fields on each record:
+
+| Field | Meaning |
+|---|---|
+| `timestamp` | ISO 8601 timestamp |
+| `service` | the running `RUN_MODE` (e.g. `event-receiver`) |
+| `level` | `info` \| `warn` \| `error` \| `debug` \| `verbose` |
+| `correlationId` | request correlation id (from the `X-Correlation-Id` header, propagated via `AsyncLocalStorage`); `null` outside a request |
+| `campaignId` | present when the log relates to a campaign |
+| `msg` | the message |
+| `context` | the emitting class/component |
+
+To trace a single request end-to-end, send an `X-Correlation-Id` and filter on it:
+
+```bash
+curl -H 'X-Correlation-Id: test-123' -X POST localhost:3000/webhooks/evolution-api -d '{}'
+# then, in the service stdout:
+... | jq 'select(.correlationId == "test-123")'
+```
+
+The logger never emits PII (recipient phone, email, template body) at `info`
+level — those keys are redacted to `[REDACTED]`.
+
+### Metrics (Prometheus)
+
+Each HTTP-serving mode exposes a Prometheus scrape endpoint:
+
+```bash
+npm run dev:event-receiver   # the script already sets RUN_MODE=event-receiver
+curl localhost:3000/metrics
+```
+
+Key metrics emitted per mode (`mode` label = `RUN_MODE`):
+
+| Metric | Type | Meaning |
+|---|---|---|
+| `evo_flow_request_duration_seconds` | summary (`p50/p95/p99`) | request/processing latency |
+| `evo_flow_errors_total{category}` | counter | errors by category (→ `error_rate` via `rate()`) |
+| `evo_flow_throughput_total` | counter | units processed (→ throughput via `rate()`) |
+| `evo_flow_consumer_lag{topic}` | gauge | consumer lag per topic/queue (consumer modes only) |
+| `idempotency_hits_total` / `idempotency_misses_total` | counter | idempotency drops vs. first-sights (→ drop rate) |
+
+> `consumer_lag` is populated by modes that consume from the broker. The
+> `event-receiver` mode is a producer (it publishes webhooks), so the gauge is
+> registered but stays unset there; real per-topic values appear on consumer
+> modes (`event-process`, `campaign-sender`) once those are wired.
+
+---
+
 ## Testing
 
 ```bash
