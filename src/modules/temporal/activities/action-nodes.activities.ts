@@ -29,6 +29,7 @@ import { SendMessageNode, SendMessageNodeInput } from './nodes/evoai/communicati
 import { SendCannedResponseNode, SendCannedResponseNodeInput } from './nodes/evoai/communication/send-canned-response.node';
 import { SendEmailTeamNode, SendEmailTeamNodeInput } from './nodes/evoai/communication/send-email-team.node';
 import { AssignToPipelineNode, AssignToPipelineNodeInput } from './nodes/evoai/pipeline/assign-to-pipeline.node';
+import { MoveToPipelineStageNode, MoveToPipelineStageNodeInput } from './nodes/evoai/pipeline/move-to-pipeline-stage.node';
 import { SendTranscriptNode, SendTranscriptNodeInput } from './nodes/evoai/communication/send-transcript.node';
 import { AssignAgentNode, AssignAgentNodeInput } from './nodes/evoai/assignment/assign-agent.node';
 import { AssignTeamNode, AssignTeamNodeInput } from './nodes/evoai/assignment/assign-team.node';
@@ -66,6 +67,7 @@ export {
   SendCannedResponseNodeInput,
   SendEmailTeamNodeInput,
   AssignToPipelineNodeInput,
+  MoveToPipelineStageNodeInput,
   ChangePriorityNodeInput,
   ScheduledActionNodeInput,
 };
@@ -111,6 +113,9 @@ export interface ActionNodeActivities {
   ): Promise<NodeExecutionResult>;
   executeAssignToPipelineNode(
     input: AssignToPipelineNodeInput,
+  ): Promise<NodeExecutionResult>;
+  executeMoveToPipelineStageNode(
+    input: MoveToPipelineStageNodeInput,
   ): Promise<NodeExecutionResult>;
   executeSendTranscriptNode(
     input: SendTranscriptNodeInput,
@@ -164,6 +169,7 @@ let sendMessageNode: SendMessageNode;
 let sendCannedResponseNode: SendCannedResponseNode;
 let sendEmailTeamNode: SendEmailTeamNode;
 let assignToPipelineNode: AssignToPipelineNode;
+let moveToPipelineStageNode: MoveToPipelineStageNode;
 let sendTranscriptNode: SendTranscriptNode;
 let assignAgentNode: AssignAgentNode;
 let assignTeamNode: AssignTeamNode;
@@ -250,6 +256,12 @@ function getAssignToPipelineNode() {
   if (!assignToPipelineNode)
     assignToPipelineNode = new AssignToPipelineNode();
   return assignToPipelineNode;
+}
+
+function getMoveToPipelineStageNode() {
+  if (!moveToPipelineStageNode)
+    moveToPipelineStageNode = new MoveToPipelineStageNode();
+  return moveToPipelineStageNode;
 }
 
 function getSendTranscriptNode() {
@@ -459,6 +471,12 @@ export const actionNodeActivities: ActionNodeActivities = {
     input: AssignToPipelineNodeInput,
   ): Promise<NodeExecutionResult> {
     return await getAssignToPipelineNode().execute(input);
+  },
+
+  async executeMoveToPipelineStageNode(
+    input: MoveToPipelineStageNodeInput,
+  ): Promise<NodeExecutionResult> {
+    return await getMoveToPipelineStageNode().execute(input);
   },
 
   async executeSendTranscriptNode(

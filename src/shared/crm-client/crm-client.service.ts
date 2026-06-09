@@ -812,6 +812,26 @@ export class CrmClientService {
     );
   }
 
+  async moveToPipelineStage(
+    pipelineId: string,
+    conversationId: string,
+    stageId: string,
+    nodeType: string = 'move-to-pipeline-stage',
+  ): Promise<CrmApiResponse<any>> {
+    const url = `${this.baseURL}/api/v1/pipelines/${pipelineId}/pipeline_items/move_conversation`;
+    return this.executeRequest(
+      url,
+      {
+        method: 'PATCH',
+        body: JSON.stringify({
+          conversation_id: conversationId,
+          pipeline_stage_id: stageId,
+        }),
+      },
+      { nodeType, conversationId },
+    );
+  }
+
   async sendEmailTeam(
     context: CrmConversationContext,
     teamIds: string[],

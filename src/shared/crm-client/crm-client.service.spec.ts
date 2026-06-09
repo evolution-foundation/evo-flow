@@ -222,6 +222,38 @@ describe('CrmClientService', () => {
     });
   });
 
+  // EVO-1272: pins the HTTP contract the Journey "Move to Pipeline Stage" node
+  // depends on. Mocking the client method elsewhere can't catch a URL/param/
+  // envelope drift between evo-flow and the Rails endpoint — this can.
+  describe('moveToPipelineStage — Journey move node contract', () => {
+    it('PATCHes /pipeline_items/move_conversation with conversation_id + pipeline_stage_id', async () => {
+      fetchMock.mockResolvedValueOnce(
+        buildFetchResponse({
+          status: 200,
+          body: {
+            success: true,
+            data: { moved: true, movement_type: 'cross_pipeline' },
+          },
+        }),
+      );
+
+      const result = await service.moveToPipelineStage('p1', 'conv-1', 'st9');
+
+      const [url, init] = fetchMock.mock.calls[0];
+      expect(url).toBe(
+        'http://crm-test.local/api/v1/pipelines/p1/pipeline_items/move_conversation',
+      );
+      expect(init.method).toBe('PATCH');
+      expect(JSON.parse(init.body)).toEqual({
+        conversation_id: 'conv-1',
+        pipeline_stage_id: 'st9',
+      });
+      // The move result is nested one level under the success_response envelope.
+      expect(result.success).toBe(true);
+      expect((result.data as any).data.movement_type).toBe('cross_pipeline');
+    });
+  });
+
   describe('auth headers', () => {
     it('uses X-Service-Token header by default (s2s)', async () => {
       fetchMock.mockResolvedValueOnce(

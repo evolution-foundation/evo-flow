@@ -833,6 +833,17 @@ export async function JourneyExecutionWorkflow(
               });
             break;
 
+          case 'move-to-pipeline-stage-node':
+            nodeResult =
+              await actionNodeActivities.executeMoveToPipelineStageNode({
+                nodeId: currentNode.id,
+                conversationId:
+                  input.triggerEvent?.properties?.conversation_id || undefined,
+                sessionId: input.sessionId,
+                nodeData: currentNode.data,
+              });
+            break;
+
           case 'send-transcript-node':
             nodeResult = await actionNodeActivities.executeSendTranscriptNode({
               nodeId: currentNode.id,
