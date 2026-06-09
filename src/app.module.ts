@@ -37,6 +37,7 @@ import { CorrelationModule } from './shared/correlation/correlation.module';
 import { AudienceModule } from './shared/audience/audience.module';
 import { MessagingChannelsModule } from './shared/messaging-channels/messaging-channels.module';
 import { EventReceiverModule } from './runners/event-receiver/event-receiver.module';
+import { CampaignPackerModule } from './runners/campaign-packer/campaign-packer.module';
 import { AppFactory } from './app-factory';
 import {
   EvoExtensionPoints,
@@ -94,6 +95,9 @@ export class AppModule {
     }
     if (AppFactory.shouldStartEventReceiver()) {
       conditionalImports.push(EventReceiverModule);
+    }
+    if (AppFactory.shouldStartCampaignPacker()) {
+      conditionalImports.push(CampaignPackerModule);
     }
 
     // Extension point (story 0.15): external consumers — e.g. an enterprise

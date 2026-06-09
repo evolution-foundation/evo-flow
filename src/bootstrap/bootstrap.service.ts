@@ -98,7 +98,7 @@ export class BootstrapService {
         break;
       case RunMode.CAMPAIGN_PACKER:
         this.logger.log(
-          '📦 CAMPAIGN PACKER MODE: Audience materialization stage (stub — module pending)',
+          '📦 CAMPAIGN PACKER MODE: Audience materialization stage (consumes campaigns.pack)',
         );
         break;
       case RunMode.CAMPAIGN_SENDER:

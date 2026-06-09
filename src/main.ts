@@ -15,7 +15,6 @@ parseRunMode(process.env.RUN_MODE);
 // reference them; each downstream story wires its module in and removes the
 // matching entry from this Set.
 const STUB_RUN_MODES = new Set<string>([
-  RunMode.CAMPAIGN_PACKER, // wired by downstream campaign-packer story (epic 4)
   RunMode.CAMPAIGN_SENDER, // wired by downstream campaign-sender story (epic 4)
   RunMode.EVENT_PROCESS, // wired by downstream event-process story (epic 3)
 ]);
