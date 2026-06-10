@@ -463,7 +463,7 @@ describe('KafkaBrokerAdapter', () => {
       await close();
     });
 
-    it('nack(requeue=true) does NOT commit and seeks back to the original offset', async () => {
+    it('nack(requeue=true) under the limit republishes with an incremented attempt header and commits past the original (EVO-1677)', async () => {
       const { adapter, received, consumer, close } = await subscribeAndCapture({
         BROKER_TYPE: 'kafka',
         RUN_MODE: 'event-process',
@@ -481,16 +481,21 @@ describe('KafkaBrokerAdapter', () => {
 
       await adapter.nack(received[0], true);
 
-      expect(consumer.commitOffsets).not.toHaveBeenCalled();
-      expect(consumer.seek).toHaveBeenCalledWith({
-        topic: 'events-topic',
-        partition: 1,
-        offset: '7',
+      expect(consumer.seek).not.toHaveBeenCalled();
+      const [sendArg] = lastKafka().producer.send.mock.calls.at(-1) as [
+        { topic: string; messages: { headers: Record<string, string> }[] },
+      ];
+      expect(sendArg.topic).toBe('events-topic');
+      expect(sendArg.messages[0].headers).toMatchObject({
+        'x-delivery-attempt': '1',
       });
+      expect(consumer.commitOffsets).toHaveBeenCalledWith([
+        { topic: 'events-topic', partition: 1, offset: '8' },
+      ]);
       await close();
     });
 
-    it('nack(msg) without second argument defaults to requeue=true', async () => {
+    it('nack(msg) without second argument defaults to requeue=true (republish)', async () => {
       const { adapter, received, consumer, close } = await subscribeAndCapture({
         BROKER_TYPE: 'kafka',
         RUN_MODE: 'event-process',
@@ -506,14 +511,59 @@ describe('KafkaBrokerAdapter', () => {
         },
       });
 
-      // No requeue argument → must behave like requeue=true.
+      // No requeue argument → must behave like requeue=true (republish + commit).
       await adapter.nack(received[0]);
 
-      expect(consumer.commitOffsets).not.toHaveBeenCalled();
-      expect(consumer.seek).toHaveBeenCalledWith({
+      expect(consumer.seek).not.toHaveBeenCalled();
+      expect(lastKafka().producer.send).toHaveBeenCalledWith(
+        expect.objectContaining({ topic: 'events-topic' }),
+      );
+      expect(consumer.commitOffsets).toHaveBeenCalledWith([
+        { topic: 'events-topic', partition: 4, offset: '12' },
+      ]);
+      await close();
+    });
+
+    it('nack(requeue=true) at the delivery limit routes to <topic>.dlq + metric (EVO-1677)', async () => {
+      const { adapter, metrics, received, consumer, close } =
+        await subscribeAndCapture({
+          BROKER_TYPE: 'kafka',
+          RUN_MODE: 'event-process',
+        });
+
+      // Default limit is 3; an x-delivery-attempt of 2 makes the next attempt 3.
+      await consumer.__triggerMessage!({
         topic: 'events-topic',
-        partition: 4,
-        offset: '11',
+        partition: 2,
+        message: {
+          offset: '20',
+          value: Buffer.from(JSON.stringify({})),
+          headers: {
+            correlationId: 'c',
+            messageId: 'm',
+            'x-delivery-attempt': '2',
+          },
+        },
+      });
+
+      const incSpy = jest.spyOn(metrics.deadLettered, 'inc');
+      await adapter.nack(received[0], true);
+
+      const [sendArg] = lastKafka().producer.send.mock.calls.at(-1) as [
+        { topic: string; messages: { headers: Record<string, string> }[] },
+      ];
+      expect(sendArg.topic).toBe('events-topic.dlq');
+      expect(sendArg.messages[0].headers).toMatchObject({
+        'x-delivery-attempt': '3',
+        'x-dlq-reason': 'delivery-limit-exceeded',
+        'x-original-topic': 'events-topic',
+      });
+      expect(consumer.commitOffsets).toHaveBeenCalledWith([
+        { topic: 'events-topic', partition: 2, offset: '21' },
+      ]);
+      expect(incSpy).toHaveBeenCalledWith({
+        broker: 'kafka',
+        topic: 'events-topic',
       });
       await close();
     });

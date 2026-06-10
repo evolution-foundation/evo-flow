@@ -9,6 +9,15 @@ import {
 } from '../interfaces/message-broker.interface';
 import { BrokerType } from '../types/broker-type.enum';
 import { BrokerMetrics } from '../metrics/broker-metrics';
+import {
+  DELIVERY_ATTEMPT_HEADER,
+  DLQ_REASON_HEADER,
+  DELIVERY_LIMIT_EXCEEDED,
+  ORIGINAL_TOPIC_HEADER,
+  dlqNameFor,
+  nextAttempt,
+  resolveDeliveryLimit,
+} from '../redelivery';
 
 type AmqpConnection = Awaited<ReturnType<typeof amqplib.connect>>;
 type AmqpChannel = Awaited<ReturnType<AmqpConnection['createChannel']>>;
@@ -44,6 +53,7 @@ interface SubscriptionState<T = unknown> {
 
 interface AmqpAckHandle {
   topic: string;
+  queueName: string;
   raw: AmqpMessage;
 }
 
@@ -62,6 +72,8 @@ export class RabbitMQBrokerAdapter
   // prefix also routes through the shared exchange (RUN_MODE=single, tests).
   private readonly patternPrefixes = new Set<string>();
   private readonly pendingAcks = new WeakMap<BrokerMessage, AmqpAckHandle>();
+  private readonly declaredDlqs = new Set<string>();
+  private deliveryLimit = 3;
   private active = false;
   private reconnecting = false;
   private warnedAboutRunMode = false;
@@ -99,6 +111,7 @@ export class RabbitMQBrokerAdapter
         );
       }
     }
+    this.deliveryLimit = resolveDeliveryLimit(this.config);
   }
 
   async onModuleDestroy(): Promise<void> {
@@ -299,10 +312,10 @@ export class RabbitMQBrokerAdapter
       return Promise.resolve();
     }
 
-    this.channel.nack(handle.raw, false, requeue);
-    this.pendingAcks.delete(msg);
-
+    // Explicit terminal drop: caller already decided this is non-retriable.
     if (!requeue) {
+      this.channel.nack(handle.raw, false, false);
+      this.pendingAcks.delete(msg);
       this.metrics.terminalFailures.inc({
         broker: BROKER_LABEL,
         topic: handle.topic,
@@ -313,15 +326,66 @@ export class RabbitMQBrokerAdapter
         correlationId: msg.headers.correlationId,
         messageId: msg.headers.messageId,
       });
-    } else {
-      this.writeStructured('info', 'broker.nack.requeue', {
+      return;
+    }
+
+    // Redelivery backstop (EVO-1677): instead of an in-place requeue that can
+    // loop a poison message forever, republish to the same queue with an
+    // incremented attempt header — or, once the limit is reached, route to the
+    // `<queue>.dlq` and ack the original so it leaves the main queue.
+    const attempt = nextAttempt(msg.headers);
+    const headers: Record<string, string> = {
+      ...msg.headers,
+      [DELIVERY_ATTEMPT_HEADER]: String(attempt),
+    };
+
+    if (attempt >= this.deliveryLimit) {
+      const dlq = dlqNameFor(handle.queueName);
+      await this.ensureDlqQueue(dlq);
+      this.channel.sendToQueue(dlq, handle.raw.content, {
+        persistent: true,
+        headers: {
+          ...headers,
+          [DLQ_REASON_HEADER]: DELIVERY_LIMIT_EXCEEDED,
+          [ORIGINAL_TOPIC_HEADER]: handle.topic,
+        },
+      });
+      this.channel.ack(handle.raw);
+      this.pendingAcks.delete(msg);
+      this.metrics.deadLettered.inc({
         broker: BROKER_LABEL,
         topic: handle.topic,
+      });
+      this.writeStructured('warn', 'broker.nack.dead_lettered', {
+        broker: BROKER_LABEL,
+        topic: handle.topic,
+        dlq,
+        attempt,
         correlationId: msg.headers.correlationId,
         messageId: msg.headers.messageId,
       });
+      return;
     }
-    return Promise.resolve();
+
+    this.channel.sendToQueue(handle.queueName, handle.raw.content, {
+      persistent: true,
+      headers,
+    });
+    this.channel.ack(handle.raw);
+    this.pendingAcks.delete(msg);
+    this.writeStructured('info', 'broker.nack.requeue', {
+      broker: BROKER_LABEL,
+      topic: handle.topic,
+      attempt,
+      correlationId: msg.headers.correlationId,
+      messageId: msg.headers.messageId,
+    });
+  }
+
+  private async ensureDlqQueue(dlq: string): Promise<void> {
+    if (this.declaredDlqs.has(dlq)) return;
+    await this.channel!.assertQueue(dlq, { durable: true });
+    this.declaredDlqs.add(dlq);
   }
 
   private async attachConsumer<T>(state: SubscriptionState<T>): Promise<void> {
@@ -380,7 +444,11 @@ export class RabbitMQBrokerAdapter
       headers,
       raw,
     };
-    this.pendingAcks.set(brokerMsg, { topic: state.topic, raw });
+    this.pendingAcks.set(brokerMsg, {
+      topic: state.topic,
+      queueName: state.queueName,
+      raw,
+    });
 
     this.writeStructured('debug', 'broker.consume', {
       broker: BROKER_LABEL,
@@ -565,6 +633,10 @@ export class RabbitMQBrokerAdapter
     this.connection = null;
     this.channel = null;
     this.declaredExchanges.clear();
+    // Same reason as declaredExchanges: the new channel must re-assert DLQ
+    // queues, or a post-reconnect dead-letter could route to a queue the broker
+    // dropped (and a non-confirm sendToQueue would silently discard it).
+    this.declaredDlqs.clear();
 
     const startTime = Date.now();
     const deadline = startTime + RECONNECT_BUDGET_MS;

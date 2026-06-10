@@ -10,6 +10,7 @@ type ChannelMock = {
   bindQueue: jest.Mock;
   consume: jest.Mock;
   publish: jest.Mock;
+  sendToQueue: jest.Mock;
   ack: jest.Mock;
   nack: jest.Mock;
   prefetch: jest.Mock;
@@ -73,6 +74,7 @@ jest.mock('amqplib', () => {
               return Promise.resolve({ consumerTag: `ctag-${Date.now()}` });
             }),
             publish: jest.fn().mockReturnValue(true),
+            sendToQueue: jest.fn().mockReturnValue(true),
             ack: jest.fn(),
             nack: jest.fn(),
             prefetch: jest.fn().mockResolvedValue(undefined),
@@ -464,7 +466,7 @@ describe('RabbitMQBrokerAdapter', () => {
       await close();
     });
 
-    it('nack(requeue=true) calls channel.nack with allUpTo=false, requeue=true', async () => {
+    it('nack(requeue=true) under the limit republishes with an incremented attempt header and acks the original (EVO-1677)', async () => {
       const { adapter, received, channel, close } = await subscribeAndCapture({
         BROKER_TYPE: 'rabbitmq',
         RUN_MODE: 'event-process',
@@ -480,7 +482,16 @@ describe('RabbitMQBrokerAdapter', () => {
 
       await adapter.nack(received[0], true);
 
-      expect(channel.nack).toHaveBeenCalledWith(raw, false, true);
+      const [queue, content, opts] = channel.sendToQueue.mock.calls.at(-1) as [
+        string,
+        Buffer,
+        { headers: Record<string, string> },
+      ];
+      expect(queue).toBe('event-process-events-topic');
+      expect(content).toBe(raw.content);
+      expect(opts.headers).toMatchObject({ 'x-delivery-attempt': '1' });
+      expect(channel.ack).toHaveBeenCalledWith(raw);
+      expect(channel.nack).not.toHaveBeenCalled();
       await close();
     });
 
@@ -510,7 +521,7 @@ describe('RabbitMQBrokerAdapter', () => {
       await close();
     });
 
-    it('nack(msg) without second arg defaults to requeue=true', async () => {
+    it('nack(msg) without second arg defaults to requeue=true (republish)', async () => {
       const { adapter, received, channel, close } = await subscribeAndCapture({
         BROKER_TYPE: 'rabbitmq',
         RUN_MODE: 'event-process',
@@ -526,7 +537,59 @@ describe('RabbitMQBrokerAdapter', () => {
 
       await adapter.nack(received[0]);
 
-      expect(channel.nack).toHaveBeenCalledWith(raw, false, true);
+      const [queue, , opts] = channel.sendToQueue.mock.calls.at(-1) as [
+        string,
+        Buffer,
+        { headers: Record<string, string> },
+      ];
+      expect(queue).toBe('event-process-events-topic');
+      expect(opts.headers).toMatchObject({ 'x-delivery-attempt': '1' });
+      expect(channel.ack).toHaveBeenCalledWith(raw);
+      await close();
+    });
+
+    it('nack(requeue=true) at the delivery limit dead-letters to <queue>.dlq + metric (EVO-1677)', async () => {
+      const { adapter, metrics, received, channel, close } =
+        await subscribeAndCapture({
+          BROKER_TYPE: 'rabbitmq',
+          RUN_MODE: 'event-process',
+        });
+
+      // Default limit is 3; an x-delivery-attempt of 2 makes the next attempt 3.
+      const raw = {
+        content: Buffer.from(JSON.stringify({})),
+        fields: { deliveryTag: 11, routingKey: 'events-topic' },
+        properties: {
+          headers: {
+            correlationId: 'c',
+            messageId: 'm',
+            'x-delivery-attempt': '2',
+          },
+        },
+      };
+      channel.__triggerMessage!(raw);
+      await new Promise((r) => setImmediate(r));
+
+      const incSpy = jest.spyOn(metrics.deadLettered, 'inc');
+      await adapter.nack(received[0], true);
+
+      const [queue, content, opts] = channel.sendToQueue.mock.calls.at(-1) as [
+        string,
+        Buffer,
+        { headers: Record<string, string> },
+      ];
+      expect(queue).toBe('event-process-events-topic.dlq');
+      expect(content).toBe(raw.content);
+      expect(opts.headers).toMatchObject({
+        'x-delivery-attempt': '3',
+        'x-dlq-reason': 'delivery-limit-exceeded',
+        'x-original-topic': 'events-topic',
+      });
+      expect(channel.ack).toHaveBeenCalledWith(raw);
+      expect(incSpy).toHaveBeenCalledWith({
+        broker: 'rabbitmq',
+        topic: 'events-topic',
+      });
       await close();
     });
 

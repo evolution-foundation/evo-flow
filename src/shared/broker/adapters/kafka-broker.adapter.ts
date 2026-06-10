@@ -17,6 +17,15 @@ import {
 } from '../interfaces/message-broker.interface';
 import { BrokerType } from '../types/broker-type.enum';
 import { BrokerMetrics } from '../metrics/broker-metrics';
+import {
+  DELIVERY_ATTEMPT_HEADER,
+  DLQ_REASON_HEADER,
+  DELIVERY_LIMIT_EXCEEDED,
+  ORIGINAL_TOPIC_HEADER,
+  dlqNameFor,
+  nextAttempt,
+  resolveDeliveryLimit,
+} from '../redelivery';
 
 const CLIENT_ID = 'evo-flow-broker';
 const DEFAULT_NUM_PARTITIONS = 12;
@@ -53,6 +62,7 @@ export class KafkaBrokerAdapter
   private readonly consumers = new Map<string, Consumer>();
   private readonly pendingAcks = new WeakMap<BrokerMessage, AckHandle>();
   private readonly ensuredTopics = new Set<string>();
+  private deliveryLimit = 3;
   private warnedAboutRunMode = false;
   private active = false;
 
@@ -68,6 +78,7 @@ export class KafkaBrokerAdapter
       return;
     }
 
+    this.deliveryLimit = resolveDeliveryLimit(this.config);
     this.kafka = this.buildKafkaClient();
     this.admin = this.kafka.admin();
     this.producer = this.kafka.producer({ idempotent: true });
@@ -279,17 +290,24 @@ export class KafkaBrokerAdapter
       );
     }
 
-    if (requeue) {
-      // Re-deliver via Kafka's own machinery: rewind the consumer to the
-      // original offset so the next poll re-fetches this message. We do NOT
-      // commit so a consumer crash before the next fetch still re-delivers.
-      handle.consumer.seek({
+    const commitPastOriginal = (): Promise<void> =>
+      handle.consumer.commitOffsets([
+        {
+          topic: handle.topic,
+          partition: handle.partition,
+          offset: String(Number(handle.offset) + 1),
+        },
+      ]);
+
+    // Explicit terminal drop: caller already decided this is non-retriable.
+    if (!requeue) {
+      await commitPastOriginal();
+      this.metrics.terminalFailures.inc({
+        broker: BROKER_LABEL,
         topic: handle.topic,
-        partition: handle.partition,
-        offset: handle.offset,
       });
       this.pendingAcks.delete(msg);
-      this.writeStructured('info', 'broker.nack.requeue', {
+      this.writeStructured('info', 'broker.nack.terminal', {
         broker: BROKER_LABEL,
         topic: handle.topic,
         correlationId: msg.headers.correlationId,
@@ -298,21 +316,62 @@ export class KafkaBrokerAdapter
       return;
     }
 
-    await handle.consumer.commitOffsets([
-      {
+    // Redelivery backstop (EVO-1677): Kafka has no native delivery count and an
+    // in-place `seek` rewinds the partition behind a poison message forever.
+    // Instead, republish to the same topic with an incremented attempt header
+    // (so the retry goes to the tail, not blocking the partition) — or, once the
+    // limit is reached, route to the `<topic>.dlq` — then commit past the
+    // original so the partition keeps moving.
+    const attempt = nextAttempt(msg.headers);
+    const value = JSON.stringify(msg.payload);
+    const headers: Record<string, string> = {
+      ...msg.headers,
+      [DELIVERY_ATTEMPT_HEADER]: String(attempt),
+    };
+
+    if (attempt >= this.deliveryLimit) {
+      const dlq = dlqNameFor(handle.topic);
+      await this.ensureTopicExists(dlq);
+      await this.producer!.send({
+        topic: dlq,
+        messages: [
+          {
+            value,
+            headers: {
+              ...headers,
+              [DLQ_REASON_HEADER]: DELIVERY_LIMIT_EXCEEDED,
+              [ORIGINAL_TOPIC_HEADER]: handle.topic,
+            },
+          },
+        ],
+      });
+      await commitPastOriginal();
+      this.metrics.deadLettered.inc({
+        broker: BROKER_LABEL,
         topic: handle.topic,
-        partition: handle.partition,
-        offset: String(Number(handle.offset) + 1),
-      },
-    ]);
-    this.metrics.terminalFailures.inc({
-      broker: BROKER_LABEL,
+      });
+      this.pendingAcks.delete(msg);
+      this.writeStructured('warn', 'broker.nack.dead_lettered', {
+        broker: BROKER_LABEL,
+        topic: handle.topic,
+        dlq,
+        attempt,
+        correlationId: msg.headers.correlationId,
+        messageId: msg.headers.messageId,
+      });
+      return;
+    }
+
+    await this.producer!.send({
       topic: handle.topic,
+      messages: [{ value, headers }],
     });
+    await commitPastOriginal();
     this.pendingAcks.delete(msg);
-    this.writeStructured('info', 'broker.nack.terminal', {
+    this.writeStructured('info', 'broker.nack.requeue', {
       broker: BROKER_LABEL,
       topic: handle.topic,
+      attempt,
       correlationId: msg.headers.correlationId,
       messageId: msg.headers.messageId,
     });
