@@ -34,15 +34,17 @@ const FORBIDDEN_PATTERNS: Array<{ keyword: string; pattern: RegExp }> = [
 ];
 
 /**
- * Lines matching any of these are exempt from the scan. Keep each entry
- * justified — this list is the audit trail of every sanctioned mention.
+ * Sanctioned tokens, STRIPPED from each line before the scan (never a
+ * whole-line exemption — that would let `routeByTenant(); // tenantDb` slip
+ * through). Keep each entry justified — this list is the audit trail of every
+ * sanctioned mention.
  */
-const ALLOWED_LINE_PATTERNS: Array<{ pattern: RegExp; reason: string }> = [
+const ALLOWED_TOKENS: Array<{ pattern: RegExp; reason: string }> = [
   {
     // The DB seam (ADR14, story 10.1b): single-account in community, the RLS
     // extension point in enterprise. Injecting it is the sanctioned way to
     // reach Postgres — it is not account routing.
-    pattern: /TenantDbContext|tenantDb/,
+    pattern: /TenantDbContext|tenantDbContext/g,
     reason: 'ADR14 tenant DB-context seam',
   },
 ];
@@ -68,11 +70,12 @@ function collectSourceFiles(dir: string): string[] {
 function scanContent(content: string, fileLabel: string): Violation[] {
   const violations: Violation[] = [];
   content.split('\n').forEach((text, index) => {
-    if (ALLOWED_LINE_PATTERNS.some(({ pattern }) => pattern.test(text))) {
-      return;
-    }
+    const scannable = ALLOWED_TOKENS.reduce(
+      (line, { pattern }) => line.replace(pattern, ''),
+      text,
+    );
     for (const { keyword, pattern } of FORBIDDEN_PATTERNS) {
-      if (pattern.test(text)) {
+      if (pattern.test(scannable)) {
         violations.push({ file: fileLabel, line: index + 1, keyword, text });
         break;
       }
@@ -110,7 +113,11 @@ describe('single-account invariant (FR44 / EVO-1228)', () => {
   RUNNER_MODES.forEach((mode) => {
     it(`keeps src/runners/${mode} free of account routing`, () => {
       const dir = path.join(RUNNERS_DIR, mode);
-      expect(fs.existsSync(dir)).toBe(true);
+      if (!fs.existsSync(dir)) {
+        throw new Error(
+          `Runner directory missing: src/runners/${mode} — update RUNNER_MODES if it was renamed.`,
+        );
+      }
       assertNoViolations(scanDirectory(dir), `src/runners/${mode}`);
     });
   });
@@ -139,12 +146,23 @@ describe('single-account invariant (FR44 / EVO-1228)', () => {
     ]);
   });
 
-  it('keeps allowed lines exempt (documented exceptions)', () => {
+  it('keeps allowed tokens exempt (documented exceptions)', () => {
     const violations = scanContent(
       'constructor(private readonly db: TenantDbContext) {}',
       'campaign-packer/example.ts',
     );
 
     expect(violations).toEqual([]);
+  });
+
+  it('does not let an allowed token launder real routing on the same line', () => {
+    const violations = scanContent(
+      'routeByTenant(tenantId); // wrapped by TenantDbContext',
+      'campaign-sender/example.ts',
+    );
+
+    expect(violations).toEqual([
+      expect.objectContaining({ line: 1, keyword: 'tenant' }),
+    ]);
   });
 });
