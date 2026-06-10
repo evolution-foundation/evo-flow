@@ -250,7 +250,40 @@ describe('CrmClientService', () => {
       });
       // The move result is nested one level under the success_response envelope.
       expect(result.success).toBe(true);
-      expect((result.data as any).data.movement_type).toBe('cross_pipeline');
+      expect(result.data.data.movement_type).toBe('cross_pipeline');
+    });
+  });
+
+  // EVO-1273: pins the HTTP contract the Journey "Create Pipeline Task" node
+  // depends on (URL, method, body and the nested envelope).
+  describe('createPipelineTask — Journey create-task node contract', () => {
+    it('POSTs /pipeline_tasks/for_conversation with conversation_id + task fields', async () => {
+      fetchMock.mockResolvedValueOnce(
+        buildFetchResponse({
+          status: 201,
+          body: { success: true, data: { created: true, task_id: 'task-1' } },
+        }),
+      );
+
+      const result = await service.createPipelineTask('conv-1', {
+        title: 'Call lead',
+        priority: 'high',
+        due_in: '2.hours',
+      });
+
+      const [url, init] = fetchMock.mock.calls[0];
+      expect(url).toBe(
+        'http://crm-test.local/api/v1/pipeline_tasks/for_conversation',
+      );
+      expect(init.method).toBe('POST');
+      expect(JSON.parse(init.body)).toEqual({
+        conversation_id: 'conv-1',
+        title: 'Call lead',
+        priority: 'high',
+        due_in: '2.hours',
+      });
+      expect(result.success).toBe(true);
+      expect(result.data.data.task_id).toBe('task-1');
     });
   });
 

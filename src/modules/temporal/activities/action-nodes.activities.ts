@@ -30,6 +30,7 @@ import { SendCannedResponseNode, SendCannedResponseNodeInput } from './nodes/evo
 import { SendEmailTeamNode, SendEmailTeamNodeInput } from './nodes/evoai/communication/send-email-team.node';
 import { AssignToPipelineNode, AssignToPipelineNodeInput } from './nodes/evoai/pipeline/assign-to-pipeline.node';
 import { MoveToPipelineStageNode, MoveToPipelineStageNodeInput } from './nodes/evoai/pipeline/move-to-pipeline-stage.node';
+import { CreatePipelineTaskNode, CreatePipelineTaskNodeInput } from './nodes/evoai/pipeline/create-pipeline-task.node';
 import { SendTranscriptNode, SendTranscriptNodeInput } from './nodes/evoai/communication/send-transcript.node';
 import { AssignAgentNode, AssignAgentNodeInput } from './nodes/evoai/assignment/assign-agent.node';
 import { AssignTeamNode, AssignTeamNodeInput } from './nodes/evoai/assignment/assign-team.node';
@@ -68,6 +69,7 @@ export {
   SendEmailTeamNodeInput,
   AssignToPipelineNodeInput,
   MoveToPipelineStageNodeInput,
+  CreatePipelineTaskNodeInput,
   ChangePriorityNodeInput,
   ScheduledActionNodeInput,
 };
@@ -116,6 +118,9 @@ export interface ActionNodeActivities {
   ): Promise<NodeExecutionResult>;
   executeMoveToPipelineStageNode(
     input: MoveToPipelineStageNodeInput,
+  ): Promise<NodeExecutionResult>;
+  executeCreatePipelineTaskNode(
+    input: CreatePipelineTaskNodeInput,
   ): Promise<NodeExecutionResult>;
   executeSendTranscriptNode(
     input: SendTranscriptNodeInput,
@@ -170,6 +175,7 @@ let sendCannedResponseNode: SendCannedResponseNode;
 let sendEmailTeamNode: SendEmailTeamNode;
 let assignToPipelineNode: AssignToPipelineNode;
 let moveToPipelineStageNode: MoveToPipelineStageNode;
+let createPipelineTaskNode: CreatePipelineTaskNode;
 let sendTranscriptNode: SendTranscriptNode;
 let assignAgentNode: AssignAgentNode;
 let assignTeamNode: AssignTeamNode;
@@ -262,6 +268,12 @@ function getMoveToPipelineStageNode() {
   if (!moveToPipelineStageNode)
     moveToPipelineStageNode = new MoveToPipelineStageNode();
   return moveToPipelineStageNode;
+}
+
+function getCreatePipelineTaskNode() {
+  if (!createPipelineTaskNode)
+    createPipelineTaskNode = new CreatePipelineTaskNode();
+  return createPipelineTaskNode;
 }
 
 function getSendTranscriptNode() {
@@ -477,6 +489,12 @@ export const actionNodeActivities: ActionNodeActivities = {
     input: MoveToPipelineStageNodeInput,
   ): Promise<NodeExecutionResult> {
     return await getMoveToPipelineStageNode().execute(input);
+  },
+
+  async executeCreatePipelineTaskNode(
+    input: CreatePipelineTaskNodeInput,
+  ): Promise<NodeExecutionResult> {
+    return await getCreatePipelineTaskNode().execute(input);
   },
 
   async executeSendTranscriptNode(

@@ -832,6 +832,29 @@ export class CrmClientService {
     );
   }
 
+  async createPipelineTask(
+    conversationId: string,
+    task: {
+      title: string;
+      description?: string;
+      task_type?: string;
+      priority?: string;
+      assigned_to_id?: string;
+      due_in?: string;
+    },
+    nodeType: string = 'create-pipeline-task',
+  ): Promise<CrmApiResponse<any>> {
+    const url = `${this.baseURL}/api/v1/pipeline_tasks/for_conversation`;
+    return this.executeRequest(
+      url,
+      {
+        method: 'POST',
+        body: JSON.stringify({ conversation_id: conversationId, ...task }),
+      },
+      { nodeType, conversationId },
+    );
+  }
+
   async sendEmailTeam(
     context: CrmConversationContext,
     teamIds: string[],

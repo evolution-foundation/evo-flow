@@ -844,6 +844,17 @@ export async function JourneyExecutionWorkflow(
               });
             break;
 
+          case 'create-pipeline-task-node':
+            nodeResult =
+              await actionNodeActivities.executeCreatePipelineTaskNode({
+                nodeId: currentNode.id,
+                conversationId:
+                  input.triggerEvent?.properties?.conversation_id || undefined,
+                sessionId: input.sessionId,
+                nodeData: currentNode.data,
+              });
+            break;
+
           case 'send-transcript-node':
             nodeResult = await actionNodeActivities.executeSendTranscriptNode({
               nodeId: currentNode.id,
