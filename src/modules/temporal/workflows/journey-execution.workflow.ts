@@ -13,6 +13,7 @@ import type { ActionNodeActivities } from '../activities/action-nodes.activities
 import type { JourneyTrackingActivities } from '../activities/journey-tracking.activities';
 import type { JourneyTrackingContext } from '../services/journey-tracking.service';
 import type { WaitActivities } from '../activities/wait.activities';
+import { resolveInitialWorkflowStatus } from './initial-workflow-status.util';
 
 // Interfaces for workflow input and state
 export interface JourneyExecutionInput {
@@ -141,10 +142,10 @@ export async function JourneyExecutionWorkflow(
           triggerEvent: input.triggerEvent, // Always use current trigger
         },
         completedNodes: existingSession.completedNodes || [],
-        status:
-          existingSession.status === 'completed'
-            ? 'running'
-            : existingSession.status || 'running', // Resume if not completed
+        // Session-store statuses ('active'/'waiting') are a different
+        // vocabulary from the workflow loop's ('running'/'paused') — copying
+        // them verbatim kept the loop from ever running (EVO-1690).
+        status: resolveInitialWorkflowStatus(existingSession.status),
       }
     : {
         currentNodeId: undefined,
