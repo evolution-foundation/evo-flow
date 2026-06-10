@@ -231,7 +231,13 @@ export class RabbitMQBrokerAdapter
   async getTopicLag(topic: string): Promise<number> {
     this.assertActive('getTopicLag');
     const queueName = `${this.resolveRunMode(topic)}-${topic}`;
-    const { messageCount } = await this.channel!.checkQueue(queueName);
+    // Same declaration as attachConsumer, so this is idempotent. checkQueue
+    // would 404 on a missing queue and that is a channel-level error that
+    // CLOSES the adapter's single shared channel — a best-effort metrics poll
+    // must never take down publish/ack for the whole process.
+    const { messageCount } = await this.channel!.assertQueue(queueName, {
+      durable: true,
+    });
     return messageCount;
   }
 
