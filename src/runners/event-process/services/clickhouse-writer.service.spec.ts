@@ -7,8 +7,7 @@ jest.mock('@clickhouse/client', () => ({
 
 import { ClickHouseWriterService } from './clickhouse-writer.service';
 import { EventProcessMetrics } from '../metrics/event-process-metrics';
-import { IMessageBroker } from 'src/shared/broker/interfaces/message-broker.interface';
-import { isEventsFailedContract } from 'src/shared/broker/contracts/events-failed.contract';
+import { DlqPublisherService } from './dlq-publisher.service';
 import { EnrichedEvent } from './enricher.service';
 
 function makeEvent(seq: number): EnrichedEvent {
@@ -59,6 +58,7 @@ describe('ClickHouseWriterService', () => {
     mockInsert.mockReset().mockResolvedValue(undefined);
     mockClose.mockReset().mockResolvedValue(undefined);
     publish = jest.fn().mockResolvedValue(undefined);
+    // The real DlqPublisherService never throws (3.8) — the mock mirrors that.
     metrics = {
       clickhouseInsertLatencyMs: { observe: jest.fn() },
       clickhouseBatchSize: { observe: jest.fn() },
@@ -67,7 +67,7 @@ describe('ClickHouseWriterService', () => {
       dlqPublishFailedTotal: { inc: jest.fn() },
     };
     service = new ClickHouseWriterService(
-      { publish } as unknown as IMessageBroker,
+      { publish } as unknown as DlqPublisherService,
       metrics as unknown as EventProcessMetrics,
     );
   });
@@ -99,7 +99,7 @@ describe('ClickHouseWriterService', () => {
     expect(insertArg().values).toHaveLength(50);
   });
 
-  it('retries 3x with exponential backoff then publishes each event to events.failed (AC3)', async () => {
+  it('retries 3x with exponential backoff then hands each event to the DLQ publisher (AC3)', async () => {
     mockInsert.mockRejectedValue(new Error('connect ECONNREFUSED'));
 
     service.enqueue(makeEvent(1));
@@ -114,14 +114,14 @@ describe('ClickHouseWriterService', () => {
     expect(metrics.clickhouseTerminalFailureTotal.inc).toHaveBeenCalledTimes(1);
 
     expect(publish).toHaveBeenCalledTimes(2);
-    const [topic, payload] = publish.mock.calls[0] as [string, unknown];
-    expect(topic).toBe('events.failed');
-    expect(isEventsFailedContract(payload)).toBe(true);
-    expect(payload).toMatchObject({
-      originalTopic: 'events.received.evolution-api',
-      failureReason: 'clickhouse_insert_exhausted_retries',
-      attempts: 3,
-    });
+    expect(publish).toHaveBeenNthCalledWith(
+      1,
+      'events.received.evolution-api',
+      expect.objectContaining({ ingestionId: makeEvent(1).ingestionId }),
+      'clickhouse_insert_exhausted_retries',
+      3,
+      makeEvent(1).correlationId,
+    );
   });
 
   it('recovers on a retry without touching the DLQ', async () => {
@@ -166,17 +166,6 @@ describe('ClickHouseWriterService', () => {
     expect(mockInsert).toHaveBeenCalledTimes(1);
     expect(insertArg().values).toHaveLength(5);
     expect(mockClose).toHaveBeenCalled();
-  });
-
-  it('counts a DLQ publish failure without throwing (last resort failed)', async () => {
-    mockInsert.mockRejectedValue(new Error('down'));
-    publish.mockRejectedValue(new Error('broker down'));
-
-    service.enqueue(makeEvent(1));
-    await jest.advanceTimersByTimeAsync(1_000 + 500 + 1_000 + 2_000 + 50);
-    await expect(pendingFlushes()).resolves.toBeUndefined();
-
-    expect(metrics.dlqPublishFailedTotal.inc).toHaveBeenCalledTimes(1);
   });
 
   it('events enqueued during an in-flight flush land in the next batch', async () => {

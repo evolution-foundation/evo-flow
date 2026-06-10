@@ -10,10 +10,11 @@ const CLICKHOUSE_RETRY_METRIC = 'evo_clickhouse_retry_total';
 const CLICKHOUSE_TERMINAL_FAILURE_METRIC =
   'evo_clickhouse_terminal_failure_total';
 const DLQ_PUBLISH_FAILED_METRIC = 'evo_dlq_publish_failed_total';
+const EVENTS_FAILED_PUBLISHED_METRIC = 'evo_events_failed_published_total';
 
 /**
  * Prometheus metrics for the event-process webhook pipeline (stories 3.4, 3.5,
- * 3.7).
+ * 3.7, 3.8).
  *
  * Each metric is fetched from the global registry if it already exists so that
  * re-instantiating this provider (e.g. across test modules) does not throw the
@@ -28,6 +29,7 @@ export class EventProcessMetrics {
   readonly clickhouseRetryTotal: Counter<string>;
   readonly clickhouseTerminalFailureTotal: Counter<string>;
   readonly dlqPublishFailedTotal: Counter<string>;
+  readonly eventsFailedPublishedTotal: Counter<string>;
 
   constructor() {
     this.signatureInvalid =
@@ -95,6 +97,16 @@ export class EventProcessMetrics {
       new Counter({
         name: DLQ_PUBLISH_FAILED_METRIC,
         help: 'events.failed publishes that themselves failed — the last resort failed, operators must look',
+      });
+
+    this.eventsFailedPublishedTotal =
+      (register.getSingleMetric(EVENTS_FAILED_PUBLISHED_METRIC) as
+        | Counter<string>
+        | undefined) ??
+      new Counter({
+        name: EVENTS_FAILED_PUBLISHED_METRIC,
+        help: 'Events published to the events.failed DLQ, labelled by failure reason for granular alerting',
+        labelNames: ['reason'],
       });
   }
 }

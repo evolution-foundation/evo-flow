@@ -5,6 +5,7 @@ import { SignatureValidatorRegistry } from './services/signature-validator.regis
 import { EventProcessMetrics } from './metrics/event-process-metrics';
 import { EnricherService } from './services/enricher.service';
 import { ClickHouseWriterService } from './services/clickhouse-writer.service';
+import { DlqPublisherService } from './services/dlq-publisher.service';
 import { RecipientSourceExtractor } from './services/recipient-source.extractor';
 import { GeoLocationService } from '../../modules/click-tracking/services/geo-location.service';
 
@@ -30,6 +31,7 @@ import { GeoLocationService } from '../../modules/click-tracking/services/geo-lo
     EventProcessMetrics,
     EnricherService,
     ClickHouseWriterService,
+    DlqPublisherService,
     RecipientSourceExtractor,
     GeoLocationService,
   ],

@@ -1,18 +1,11 @@
-import { Inject, Injectable, OnModuleDestroy } from '@nestjs/common';
+import { Injectable, OnModuleDestroy } from '@nestjs/common';
 import { createClient, ClickHouseClient } from '@clickhouse/client';
 import { randomUUID } from 'crypto';
 import { CustomLoggerService } from 'src/common/services/custom-logger.service';
 import { getProcessingConfig } from 'src/modules/processing/config/processing.config';
-import {
-  IMessageBroker,
-  IMESSAGE_BROKER,
-} from 'src/shared/broker/interfaces/message-broker.interface';
-import {
-  EVENTS_FAILED_TOPIC,
-  EventsFailedContract,
-} from 'src/shared/broker/contracts/events-failed.contract';
 import { getEventsReceivedTopic } from 'src/shared/broker/contracts/events-received.contract';
 import { EnrichedEvent } from './enricher.service';
+import { DlqPublisherService } from './dlq-publisher.service';
 import { EventProcessMetrics } from '../metrics/event-process-metrics';
 
 const BATCH_SIZE = 100;
@@ -56,10 +49,10 @@ interface BufferedEvent {
  * is in flight accumulate into the next batch.
  *
  * Failure handling: each batch INSERT is retried per {@link RETRY_BACKOFF_MS};
- * on exhaustion every event of the batch is published individually to
- * `events.failed` (per-event contract — story 3.8 later extracts a dedicated
- * publisher). A failed DLQ publish is logged loudly + counted, never thrown:
- * the consumer must ack regardless, or the broker would redeliver a payload we
+ * on exhaustion every event of the batch is handed individually to the
+ * dedicated {@link DlqPublisherService} (story 3.8), which publishes to
+ * `events.failed`, logs + counts its own failures and never throws — the
+ * consumer must ack regardless, or the broker would redeliver a payload we
  * can no longer persist.
  *
  * Durability trade-off (inherent to the story's fire-and-forget `enqueue`):
@@ -93,7 +86,7 @@ export class ClickHouseWriterService implements OnModuleDestroy {
   private flushChain: Promise<void> = Promise.resolve();
 
   constructor(
-    @Inject(IMESSAGE_BROKER) private readonly broker: IMessageBroker,
+    private readonly dlqPublisher: DlqPublisherService,
     private readonly metrics: EventProcessMetrics,
   ) {
     this.table = getProcessingConfig().clickhouse?.table || 'contact_events';
@@ -178,31 +171,18 @@ export class ClickHouseWriterService implements OnModuleDestroy {
   }
 
   private async publishBatchToDlq(batch: BufferedEvent[]): Promise<void> {
-    const lastFailureAt = new Date().toISOString();
-
     for (const { source } of batch) {
-      const payload: EventsFailedContract = {
-        originalTopic: getEventsReceivedTopic(source.platform),
-        // The ENRICHED event (envelope superset), not the bare envelope: a
-        // manual reprocess can re-insert without re-running enrichment.
-        originalPayload: source,
-        failureReason: 'clickhouse_insert_exhausted_retries',
-        attempts: RETRY_BACKOFF_MS.length,
-        lastFailureAt,
-        correlationId: source.correlationId,
-      };
-
-      try {
-        await this.broker.publish(EVENTS_FAILED_TOPIC, payload);
-      } catch (publishError) {
-        this.metrics.dlqPublishFailedTotal.inc();
-        this.logger.error('clickhouse-writer.dlq-publish.failed', {
-          action: 'clickhouse-writer.dlq-publish.failed',
-          correlationId: source.correlationId,
-          ingestionId: source.ingestionId,
-          error: (publishError as Error).message,
-        });
-      }
+      // The ENRICHED event (envelope superset), not the bare envelope: a
+      // manual reprocess can re-insert without re-running enrichment. The
+      // correlationId is passed explicitly — activity contexts may lack CLS.
+      // The publisher logs + counts its own failures and never throws (3.8).
+      await this.dlqPublisher.publish(
+        getEventsReceivedTopic(source.platform),
+        source,
+        'clickhouse_insert_exhausted_retries',
+        RETRY_BACKOFF_MS.length,
+        source.correlationId,
+      );
     }
   }
 
