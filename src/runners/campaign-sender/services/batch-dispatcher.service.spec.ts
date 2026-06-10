@@ -1,5 +1,6 @@
 import { BatchDispatcherService } from './batch-dispatcher.service';
 import { CampaignNotConfiguredError } from '../errors/campaign-not-configured.error';
+import { RateLimitedError } from '../errors/rate-limited.error';
 import { MessageTemplate } from '../../../shared/entities/message-template.entity';
 import type { HydratedContact } from '../../../shared/crm-client/types/contact';
 
@@ -26,12 +27,23 @@ describe('BatchDispatcherService', () => {
   let service: BatchDispatcherService;
   let findOne: jest.Mock;
   let dispatch: jest.Mock;
+  let acquire: jest.Mock;
+  let log: jest.Mock;
+  let warn: jest.Mock;
 
   beforeEach(() => {
     findOne = jest.fn();
     dispatch = jest.fn();
+    acquire = jest.fn().mockResolvedValue(true);
+    log = jest.fn();
+    warn = jest.fn();
     const db = { getRepository: () => ({ findOne }) };
-    service = new BatchDispatcherService(db as any, { dispatch } as any);
+    service = new BatchDispatcherService(
+      db as any,
+      { dispatch } as any,
+      { acquire } as any,
+      { log, warn } as any,
+    );
   });
 
   describe('loadTemplate', () => {
@@ -64,6 +76,7 @@ describe('BatchDispatcherService', () => {
         contact,
       });
 
+      expect(acquire).toHaveBeenCalledWith('inbox-1');
       expect(dispatch).toHaveBeenCalledWith({
         contactId: 'contact-1',
         inboxId: 'inbox-1',
@@ -114,7 +127,56 @@ describe('BatchDispatcherService', () => {
         contact: sparse,
       });
 
-      expect(dispatch.mock.calls[0][0].content).toBe('Hi , your plan is ');
+      const [[arg]] = dispatch.mock.calls as [[{ content: string }]];
+      expect(arg.content).toBe('Hi , your plan is ');
+    });
+  });
+
+  describe('rate limiting (EVO-1218)', () => {
+    const input = {
+      campaignId: 'camp-1',
+      inboxId: 'inbox-1',
+      template,
+      contact,
+    };
+
+    it('acquires exactly one token on the happy path without retry logs', async () => {
+      dispatch.mockResolvedValueOnce({ success: true, latencyMs: 1 });
+
+      await service.dispatch(input);
+
+      expect(acquire).toHaveBeenCalledTimes(1);
+      expect(log).not.toHaveBeenCalled();
+      expect(warn).not.toHaveBeenCalled();
+    });
+
+    // AC4: blocked once, acquired on the first retry after the 50ms sleep.
+    it('retries after a blocked acquire and logs "rate-limit retry 1: acquired"', async () => {
+      acquire.mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+      dispatch.mockResolvedValueOnce({ success: true, latencyMs: 1 });
+
+      await service.dispatch(input);
+
+      expect(acquire).toHaveBeenCalledTimes(2);
+      expect(log).toHaveBeenCalledWith('rate-limit retry 1: acquired', {
+        inboxId: 'inbox-1',
+      });
+      expect(dispatch).toHaveBeenCalledTimes(1);
+    });
+
+    // AC3: 1 + 3 retries all blocked → transient RateLimitedError (the ack
+    // policy maps non-TerminalError to nack(requeue=true)).
+    it('throws RateLimitedError and logs "rate-limited: requeued" after 4 blocked attempts', async () => {
+      acquire.mockResolvedValue(false);
+
+      await expect(service.dispatch(input)).rejects.toThrow(RateLimitedError);
+
+      expect(acquire).toHaveBeenCalledTimes(4);
+      expect(dispatch).not.toHaveBeenCalled();
+      expect(warn).toHaveBeenCalledWith('rate-limited: requeued', {
+        inboxId: 'inbox-1',
+        attempts: 4,
+      });
     });
   });
 });
