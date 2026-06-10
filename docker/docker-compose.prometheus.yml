@@ -1,0 +1,56 @@
+version: '3.8'
+
+networks:
+  local-net:
+    external: true
+
+services:
+  # =============================================================================
+  # PROMETHEUS - Metrics scraping + service-specific alert rules (EVO-1224)
+  # =============================================================================
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: evo-campaign-prometheus
+    networks:
+      - local-net
+    ports:
+      - "9090:9090"
+    extra_hosts:
+      # Linux/WSL: lets the container scrape the app running on the host.
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/alert-rules.yml:/etc/prometheus/alert-rules.yml:ro
+      - prometheus_data:/prometheus
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:9090/-/healthy"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # =============================================================================
+  # ALERTMANAGER - Routes firing alerts to the on-call channel
+  # =============================================================================
+  alertmanager:
+    image: prom/alertmanager:latest
+    container_name: evo-campaign-alertmanager
+    networks:
+      - local-net
+    ports:
+      - "9093:9093"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./prometheus/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager_data:/alertmanager
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:9093/-/healthy"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+volumes:
+  prometheus_data:
+  alertmanager_data:

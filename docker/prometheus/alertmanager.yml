@@ -1,0 +1,27 @@
+# Alertmanager routing for the evo-flow pipeline alerts (story 5.3 / EVO-1224).
+#
+# No notification platform is configured for this project yet, so the single
+# receiver below is a webhook PLACEHOLDER: point it at whatever the team
+# adopts (a Slack workflow, an incident tool, a thin relay). To switch
+# channel, replace `webhook_configs` with the matching block, e.g.:
+#
+#   slack_configs:
+#     - api_url: <secret webhook URL — inject via env/file, never commit>
+#       channel: '#on-call'
+#       send_resolved: true
+#
+# or `email_configs` (smtp_* settings under `global:`). Keep secrets OUT of
+# this file — mount a local override or use amtool-compatible env templating.
+route:
+  receiver: on-call-webhook
+  group_by: ['alertname', 'service']
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+
+receivers:
+  - name: on-call-webhook
+    webhook_configs:
+      # Placeholder endpoint — replace with the team's real on-call channel.
+      - url: http://host.docker.internal:5001/alerts
+        send_resolved: true
