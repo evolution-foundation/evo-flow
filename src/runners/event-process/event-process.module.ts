@@ -3,6 +3,9 @@ import { EventProcessService } from './services/event-process.service';
 import { EventsReceivedConsumer } from './services/events-received.consumer';
 import { SignatureValidatorRegistry } from './services/signature-validator.registry';
 import { EventProcessMetrics } from './metrics/event-process-metrics';
+import { EnricherService } from './services/enricher.service';
+import { RecipientSourceExtractor } from './services/recipient-source.extractor';
+import { GeoLocationService } from '../../modules/click-tracking/services/geo-location.service';
 
 /**
  * Runner module for RUN_MODE=event-process (story 3.3 / EVO-1208).
@@ -13,6 +16,10 @@ import { EventProcessMetrics } from './metrics/event-process-metrics';
  * is global (ConfigModule.forRoot isGlobal), so this module only declares the
  * consumer, handler, signature-validator registry and metrics. Imported
  * conditionally from AppModule.forRoot() when shouldStartEventProcess() is true.
+ *
+ * `GeoLocationService` is reused from click-tracking by declaring it as a
+ * provider here (it has no injected dependencies), avoiding a dependency on the
+ * whole `ClickTrackingModule` (story 3.6 / EVO-1212).
  */
 @Module({
   providers: [
@@ -20,6 +27,9 @@ import { EventProcessMetrics } from './metrics/event-process-metrics';
     EventsReceivedConsumer,
     SignatureValidatorRegistry,
     EventProcessMetrics,
+    EnricherService,
+    RecipientSourceExtractor,
+    GeoLocationService,
   ],
 })
 export class EventProcessModule {}
