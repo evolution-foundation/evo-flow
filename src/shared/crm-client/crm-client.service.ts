@@ -34,6 +34,19 @@ export interface CrmConversationContext {
 }
 
 /**
+ * Wire shape of `template_params` accepted by the CRM messages endpoint
+ * (Messages::MessageBuilder#process_template_content): the CRM resolves the
+ * template by name+language on the conversation's channel and re-renders the
+ * content server-side; providers (WhatsApp Cloud) use it for the Meta send.
+ */
+export interface CrmMessageTemplateParams {
+  name: string;
+  language?: string;
+  category?: string;
+  processed_params?: Record<string, unknown>;
+}
+
+/**
  * CrmClientService — REST client for evo-ai-crm-community (Rails).
  *
  * Promoted from `src/modules/temporal/activities/nodes/evoai/evo-ai-crm-base.service.ts`.
@@ -676,15 +689,35 @@ export class CrmClientService {
     content: string,
     isPrivate: boolean = false,
     nodeType: string = 'send-message',
+    templateParams?: CrmMessageTemplateParams,
   ): Promise<CrmApiResponse<any>> {
     const url = `${this.getConversationURL(context.conversationId)}/messages`;
     return this.executeRequest(
       url,
       {
         method: 'POST',
-        body: JSON.stringify({ content, private: isPrivate }),
+        body: JSON.stringify({
+          content,
+          private: isPrivate,
+          ...(templateParams && { template_params: templateParams }),
+        }),
       },
       { nodeType, conversationId: context.conversationId },
+    );
+  }
+
+  /**
+   * Active message templates of an inbox (EVO-1231/EVO-1232 CRUD). The
+   * success_response envelope puts the template array under `data.data`.
+   */
+  async getInboxMessageTemplates(
+    inboxId: string,
+  ): Promise<CrmApiResponse<any>> {
+    const url = `${this.baseURL}/api/v1/inboxes/${inboxId}/message_templates?active=true&per_page=-1`;
+    return this.executeRequest(
+      url,
+      { method: 'GET' },
+      { nodeType: 'get-message-templates', conversationId: 'n/a' },
     );
   }
 
