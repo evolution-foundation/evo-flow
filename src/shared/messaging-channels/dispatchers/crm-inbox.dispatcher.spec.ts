@@ -103,4 +103,54 @@ describe('CrmInboxDispatcher', () => {
     const body = bodyOf(fetchMock.mock.calls[0] as FetchCall);
     expect(body.message.template_params).toBeUndefined();
   });
+
+  // EVO-1219: transportRetries=1 makes the campaign-sender's exponential
+  // backoff the single retry owner — no hidden in-transport retries.
+  describe('transportRetries', () => {
+    it('does not retry a network error when transportRetries=1', async () => {
+      fetchMock.mockRejectedValue(new Error('ECONNREFUSED'));
+
+      const result = await dispatcher.dispatch({
+        ...input,
+        transportRetries: 1,
+      });
+
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(result.success).toBe(false);
+      expect(result.statusCode).toBeUndefined();
+      expect(result.error?.code).toBe('DISPATCH_ERROR');
+    });
+
+    it('surfaces a 429 as a plain response when transportRetries=1 (no Retry-After wait)', async () => {
+      fetchMock.mockResolvedValue({
+        ok: false,
+        status: 429,
+        headers: { get: () => '7' },
+        text: () => Promise.resolve('slow down'),
+      });
+
+      const result = await dispatcher.dispatch({
+        ...input,
+        transportRetries: 1,
+      });
+
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(result.statusCode).toBe(429);
+    });
+
+    it('keeps the legacy quick network retry when transportRetries is omitted', async () => {
+      fetchMock
+        .mockRejectedValueOnce(new Error('ETIMEDOUT'))
+        .mockResolvedValue({
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve({ id: 'c', messages: [] }),
+        });
+
+      const result = await dispatcher.dispatch(input);
+
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(result.success).toBe(true);
+    });
+  });
 });

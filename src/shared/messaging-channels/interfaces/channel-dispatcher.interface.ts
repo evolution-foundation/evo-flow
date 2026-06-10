@@ -15,6 +15,13 @@ export interface ChannelDispatchInput {
     language?: string;
     processed_params?: Record<string, unknown>;
   };
+  /**
+   * Transport-level attempts for a single dispatch (default 3, the legacy
+   * behavior: quick network/429 retries inside the HTTP call). The
+   * campaign-sender passes 1 so its own exponential-backoff policy (story
+   * 4.5 / EVO-1219) is the single owner of retries on the new path.
+   */
+  transportRetries?: number;
 }
 
 export interface DispatchResult {

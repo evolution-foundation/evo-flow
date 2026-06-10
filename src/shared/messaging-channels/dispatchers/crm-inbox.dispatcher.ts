@@ -74,11 +74,15 @@ export class CrmInboxDispatcher implements IChannelDispatcher {
 
     const start = Date.now();
     try {
-      const response = await this.executeRequest(url, {
-        method: 'POST',
-        headers: this.getHeaders(),
-        body: JSON.stringify(payload),
-      });
+      const response = await this.executeRequest(
+        url,
+        {
+          method: 'POST',
+          headers: this.getHeaders(),
+          body: JSON.stringify(payload),
+        },
+        input.transportRetries,
+      );
       const latencyMs = Date.now() - start;
 
       if (!response.ok) {
@@ -139,12 +143,17 @@ export class CrmInboxDispatcher implements IChannelDispatcher {
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), this.timeout);
 
-        const response = await fetch(url, {
-          ...options,
-          signal: controller.signal,
-        });
-
-        clearTimeout(timeoutId);
+        let response: Response;
+        try {
+          response = await fetch(url, {
+            ...options,
+            signal: controller.signal,
+          });
+        } finally {
+          // Also on a rejected fetch — otherwise the abort timer leaks for
+          // the full 30s after every network error.
+          clearTimeout(timeoutId);
+        }
 
         if (response.status === 429 && attempt < maxRetries) {
           const retryAfter = response.headers.get('Retry-After');
