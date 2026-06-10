@@ -40,6 +40,7 @@ import { AudienceModule } from './shared/audience/audience.module';
 import { MessagingChannelsModule } from './shared/messaging-channels/messaging-channels.module';
 import { EventReceiverModule } from './runners/event-receiver/event-receiver.module';
 import { CampaignPackerModule } from './runners/campaign-packer/campaign-packer.module';
+import { CampaignSenderModule } from './runners/campaign-sender/campaign-sender.module';
 import { EventProcessModule } from './runners/event-process/event-process.module';
 import { AppFactory } from './app-factory';
 import {
@@ -103,6 +104,9 @@ export class AppModule {
     }
     if (AppFactory.shouldStartCampaignPacker()) {
       conditionalImports.push(CampaignPackerModule);
+    }
+    if (AppFactory.shouldStartCampaignSender()) {
+      conditionalImports.push(CampaignSenderModule);
     }
     if (AppFactory.shouldStartEventProcess()) {
       conditionalImports.push(EventProcessModule);

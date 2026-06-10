@@ -2,7 +2,6 @@
 import * as dotenv from 'dotenv';
 dotenv.config();
 
-import { RunMode } from './modules/processing/enums/run-mode.enum';
 import { parseRunMode } from './modules/processing/config/processing.config';
 
 // Fail-fast validation BEFORE NestFactory.create (EVO-1194 AC3).
@@ -13,10 +12,9 @@ parseRunMode(process.env.RUN_MODE);
 // Stub-mode short-circuit for RUN_MODEs whose dedicated modules have not landed yet.
 // EVO-1194 introduces the names so docker-compose / k8s manifests can already
 // reference them; each downstream story wires its module in and removes the
-// matching entry from this Set.
-const STUB_RUN_MODES = new Set<string>([
-  RunMode.CAMPAIGN_SENDER, // wired by downstream campaign-sender story (epic 4)
-]);
+// matching entry from this Set. Empty since campaign-sender (EVO-1217) landed —
+// kept for the next pre-wired RUN_MODE.
+const STUB_RUN_MODES = new Set<string>([]);
 if (STUB_RUN_MODES.has(process.env.RUN_MODE ?? '')) {
   // Structured JSON to stderr so log collectors (Loki / Datadog) ingest the
   // stub-exit event with proper severity instead of treating it as untagged
