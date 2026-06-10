@@ -86,3 +86,25 @@ Cada serviço tem sua pasta de configuração:
 - `clickhouse/` - Configurações do ClickHouse
 - `redis/` - Configurações do Redis
 - `rabbitmq/` - Configurações do RabbitMQ
+- `prometheus/` - Configurações do Prometheus/Alertmanager (alertas do pipeline)
+
+## 📟 Observability stack (Prometheus + Alertmanager — EVO-1224)
+
+Sobe o Prometheus (scrape do `GET /metrics` da app) e o Alertmanager com os 4
+alertas serviço-específicos do pipeline (`docker/prometheus/alert-rules.yml`;
+runbooks em `docs/runbooks/`):
+
+```bash
+cd docker
+docker compose -f docker-compose.prometheus.yml up -d
+```
+
+- **Prometheus**: http://localhost:9090 (alertas em /alerts)
+- **Alertmanager**: http://localhost:9093
+
+Local, rode a app em `RUN_MODE=single` para todos os sinais aparecerem num
+único `/metrics` (porta 3334). A exposição de `/metrics` por modo worker chega
+com a story 5.1 (EVO-1226) — depois dela, adicione um target por modo no
+`prometheus/prometheus.yml`. O canal de notificação do Alertmanager é um
+webhook placeholder — troque pelo canal real do time (instruções no próprio
+`prometheus/alertmanager.yml`).
