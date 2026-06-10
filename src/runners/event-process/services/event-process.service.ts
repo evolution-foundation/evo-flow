@@ -7,6 +7,8 @@ import {
 import { TerminalError } from 'src/shared/errors/terminal-error';
 import { IdempotencyService } from 'src/shared/idempotency/idempotency.service';
 import { SignatureValidatorRegistry } from './signature-validator.registry';
+import { EnricherService } from './enricher.service';
+import { ClickHouseWriterService } from './clickhouse-writer.service';
 import { EventProcessMetrics } from '../metrics/event-process-metrics';
 
 /**
@@ -17,13 +19,13 @@ import { EventProcessMetrics } from '../metrics/event-process-metrics';
 export class InvalidEnvelopeError extends TerminalError {}
 
 /**
- * Stub handler for the webhook event pipeline (story 3.3 / EVO-1208).
+ * Handler for the webhook event pipeline (story 3.3 / EVO-1208).
  *
  * Validates the inbound `events.received.<platform>` envelope, verifies the
- * provider signature (3.4) and drops duplicates via the shared idempotency
- * guard (3.5). Enrichment (3.6) and ClickHouse persist (3.7) plug in after the
- * idempotency gate in later stories. Throws on a malformed envelope so the
- * consumer can nack/redeliver rather than silently dropping a message.
+ * provider signature (3.4), drops duplicates via the shared idempotency guard
+ * (3.5), enriches the event (3.6) and hands it to the micro-batching
+ * ClickHouse writer (3.7). Throws on a malformed envelope so the consumer can
+ * nack/redeliver rather than silently dropping a message.
  */
 @Injectable()
 export class EventProcessService {
@@ -33,6 +35,8 @@ export class EventProcessService {
     private readonly validators: SignatureValidatorRegistry,
     private readonly metrics: EventProcessMetrics,
     private readonly idempotency: IdempotencyService,
+    private readonly enricher: EnricherService,
+    private readonly writer: ClickHouseWriterService,
   ) {}
 
   async handle(envelope: unknown): Promise<void> {
@@ -47,6 +51,9 @@ export class EventProcessService {
 
     if (await this.isDuplicate(valid)) return;
 
+    const enriched = await this.enricher.enrich(valid);
+    this.writer.enqueue(enriched);
+
     this.logger.log('event-process.handle', {
       action: 'event-process.handle',
       platform: valid.platform,
@@ -56,8 +63,6 @@ export class EventProcessService {
         JSON.stringify(valid.rawPayload ?? null),
       ),
     });
-
-    return Promise.resolve();
   }
 
   /**

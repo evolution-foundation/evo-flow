@@ -4,6 +4,7 @@ import { EventsReceivedConsumer } from './services/events-received.consumer';
 import { SignatureValidatorRegistry } from './services/signature-validator.registry';
 import { EventProcessMetrics } from './metrics/event-process-metrics';
 import { EnricherService } from './services/enricher.service';
+import { ClickHouseWriterService } from './services/clickhouse-writer.service';
 import { RecipientSourceExtractor } from './services/recipient-source.extractor';
 import { GeoLocationService } from '../../modules/click-tracking/services/geo-location.service';
 
@@ -28,6 +29,7 @@ import { GeoLocationService } from '../../modules/click-tracking/services/geo-lo
     SignatureValidatorRegistry,
     EventProcessMetrics,
     EnricherService,
+    ClickHouseWriterService,
     RecipientSourceExtractor,
     GeoLocationService,
   ],

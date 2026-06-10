@@ -2,6 +2,8 @@ import { EventProcessService } from './event-process.service';
 import { SignatureValidatorRegistry } from './signature-validator.registry';
 import { EventProcessMetrics } from '../metrics/event-process-metrics';
 import { IdempotencyService } from 'src/shared/idempotency/idempotency.service';
+import { EnricherService } from './enricher.service';
+import { ClickHouseWriterService } from './clickhouse-writer.service';
 
 describe('EventProcessService', () => {
   let service: EventProcessService;
@@ -11,6 +13,8 @@ describe('EventProcessService', () => {
   let duplicatesInc: jest.Mock;
   let computeHash: jest.Mock;
   let checkAndMark: jest.Mock;
+  let enrich: jest.Mock;
+  let enqueue: jest.Mock;
 
   const validEnvelope = {
     platform: 'evolution-api',
@@ -31,6 +35,14 @@ describe('EventProcessService', () => {
     duplicatesInc = jest.fn();
     computeHash = jest.fn((payload: string) => `hash:${payload}`);
     checkAndMark = jest.fn().mockResolvedValue(true);
+    enrich = jest.fn(
+      (envelope: unknown): Promise<Record<string, unknown>> =>
+        Promise.resolve({
+          ...(envelope as Record<string, unknown>),
+          enrichment: { ua: {}, geo: {}, botMarkers: {} },
+        }),
+    );
+    enqueue = jest.fn();
     service = new EventProcessService(
       { for: forPlatform } as unknown as SignatureValidatorRegistry,
       {
@@ -38,6 +50,8 @@ describe('EventProcessService', () => {
         eventDuplicatesDropped: { inc: duplicatesInc },
       } as unknown as EventProcessMetrics,
       { computeHash, checkAndMark } as unknown as IdempotencyService,
+      { enrich } as unknown as EnricherService,
+      { enqueue } as unknown as ClickHouseWriterService,
     );
   });
 
@@ -45,6 +59,30 @@ describe('EventProcessService', () => {
     await expect(service.handle(validEnvelope)).resolves.toBeUndefined();
     expect(validate).toHaveBeenCalledWith('raw-body-bytes', { apikey: 'tok' });
     expect(inc).not.toHaveBeenCalled();
+  });
+
+  it('enriches the event and hands it to the ClickHouse writer (story 3.7)', async () => {
+    await service.handle(validEnvelope);
+
+    expect(enrich).toHaveBeenCalledWith(validEnvelope);
+    expect(enqueue).toHaveBeenCalledWith(
+      expect.objectContaining({
+        platform: 'evolution-api',
+        enrichment: { ua: {}, geo: {}, botMarkers: {} },
+      }),
+    );
+  });
+
+  it('does not enrich or enqueue dropped envelopes (invalid signature / duplicate)', async () => {
+    validate.mockReturnValueOnce(false);
+    await service.handle(validEnvelope);
+
+    validate.mockReturnValue(true);
+    checkAndMark.mockResolvedValueOnce(false);
+    await service.handle(validEnvelope);
+
+    expect(enrich).not.toHaveBeenCalled();
+    expect(enqueue).not.toHaveBeenCalled();
   });
 
   it('throws for a payload that is not a valid envelope', async () => {
