@@ -1,0 +1,25 @@
+name: single-account guard
+
+# Anti-forgetting guard for the single-account invariant (PRD §7, FR44,
+# story 5.6 / EVO-1228). Fails the build when account-routing keywords land in
+# src/runners outside the documented allowlist. See
+# src/runners/single-account.spec.ts for the keyword list and exceptions.
+
+on:
+  pull_request:
+    branches: [main, develop]
+  push:
+    branches: [main, develop]
+
+jobs:
+  single-account:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install dependencies
+        run: npm ci
+      - name: Enforce single-account invariant
+        run: npx jest --runInBand single-account.spec
