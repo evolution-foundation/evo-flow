@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { CampaignPackerService } from './services/campaign-packer.service';
+import { PaginationService } from './services/pagination.service';
 import { CampaignsPackConsumer } from './consumers/campaigns-pack.consumer';
 
 /**
@@ -13,6 +14,6 @@ import { CampaignsPackConsumer } from './consumers/campaigns-pack.consumer';
  * AppModule.forRoot() when AppFactory.shouldStartCampaignPacker() is true.
  */
 @Module({
-  providers: [CampaignPackerService, CampaignsPackConsumer],
+  providers: [CampaignPackerService, PaginationService, CampaignsPackConsumer],
 })
 export class CampaignPackerModule {}
