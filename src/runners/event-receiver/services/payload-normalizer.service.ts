@@ -45,7 +45,7 @@ export class PayloadNormalizerService {
     return {
       platform: input.platform,
       rawPayload: input.rawPayload,
-      headers: this.flattenHeaders(input.headers),
+      headers: this.flattenHeaders(input.headers, input.platform),
       receivedAt: new Date().toISOString(),
       sourceIp: input.sourceIp,
       ingestionId: randomUUID(),
@@ -53,16 +53,31 @@ export class PayloadNormalizerService {
     };
   }
 
-  private flattenHeaders(headers: IncomingHttpHeaders): Record<string, string> {
+  private flattenHeaders(
+    headers: IncomingHttpHeaders,
+    platform: Platform,
+  ): Record<string, string> {
     const flat: Record<string, string> = {};
     for (const [key, value] of Object.entries(headers)) {
       if (value === undefined) continue;
-      flat[key] = REDACTED_HEADERS.has(key.toLowerCase())
+      flat[key] = this.shouldRedact(key.toLowerCase(), platform)
         ? REDACTED_VALUE
         : Array.isArray(value)
           ? value.join(', ')
           : value;
     }
     return flat;
+  }
+
+  /**
+   * SparkPost authenticates its webhook with HTTP Basic Auth in the
+   * Authorization header, and story 3.4's validator can only verify it if the
+   * value survives ingestion — so Authorization is the single credential header
+   * preserved, and only for the `sparkpost` platform. Every other credential
+   * header, and Authorization on any other platform, stays redacted.
+   */
+  private shouldRedact(lowerKey: string, platform: Platform): boolean {
+    if (lowerKey === 'authorization' && platform === 'sparkpost') return false;
+    return REDACTED_HEADERS.has(lowerKey);
   }
 }

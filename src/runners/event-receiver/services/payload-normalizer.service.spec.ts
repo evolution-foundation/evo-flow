@@ -63,6 +63,35 @@ describe('PayloadNormalizerService', () => {
     expect(envelope.headers['content-type']).toBe('application/json');
   });
 
+  // EVO-1210 B1: SparkPost's only webhook auth is HTTP Basic in Authorization,
+  // which the event-process validator must see — so Authorization is preserved
+  // for sparkpost only, while other credential headers stay redacted.
+  it('preserves the Authorization header for sparkpost (but not its other credential headers)', () => {
+    const basic =
+      'Basic ' + Buffer.from('sp-user:sp-pass', 'utf8').toString('base64');
+    const envelope = normalizer.build({
+      ...baseInput,
+      platform: 'sparkpost' as const,
+      headers: {
+        authorization: basic,
+        cookie: 'session=abc',
+      } as IncomingHttpHeaders,
+    });
+
+    expect(envelope.headers['authorization']).toBe(basic);
+    expect(envelope.headers['cookie']).toBe('[REDACTED]');
+  });
+
+  it('still redacts Authorization for non-sparkpost platforms', () => {
+    const envelope = normalizer.build({
+      ...baseInput,
+      platform: 'mailersend' as const,
+      headers: { authorization: 'Basic abc' } as IncomingHttpHeaders,
+    });
+
+    expect(envelope.headers['authorization']).toBe('[REDACTED]');
+  });
+
   it('flattens array-valued headers and drops undefined ones', () => {
     const envelope = normalizer.build({
       ...baseInput,
