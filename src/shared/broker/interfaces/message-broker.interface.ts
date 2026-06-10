@@ -36,6 +36,14 @@ export interface IMessageBroker {
    * for explicit deploy-time provisioning (EVO-1200). Safe to call repeatedly.
    */
   provisionTopic(topic: string): Promise<void>;
+  /**
+   * Best-effort consumer lag for this process's consumer group/queue on
+   * `topic` (Kafka: sum of partition high-watermark minus committed offset;
+   * RabbitMQ: ready message count of the `${RUN_MODE}-${topic}` queue). Feeds
+   * the `consumer_lag` gauge (NFR33); callers must tolerate a rejection and
+   * never let a failed poll disturb message processing.
+   */
+  getTopicLag(topic: string): Promise<number>;
 }
 
 export const IMESSAGE_BROKER: unique symbol = Symbol('IMessageBroker');

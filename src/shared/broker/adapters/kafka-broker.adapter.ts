@@ -204,6 +204,35 @@ export class KafkaBrokerAdapter
     await this.ensureTopicExists(topic);
   }
 
+  async getTopicLag(topic: string): Promise<number> {
+    this.assertActive('getTopicLag');
+
+    const groupId = `${this.resolveRunMode(topic)}-${topic}`;
+    const [latest, committed] = await Promise.all([
+      this.admin!.fetchTopicOffsets(topic),
+      this.admin!.fetchOffsets({ groupId, topics: [topic] }),
+    ]);
+
+    const committedByPartition = new Map<number, string>();
+    for (const entry of committed) {
+      for (const partition of entry.partitions) {
+        committedByPartition.set(partition.partition, partition.offset);
+      }
+    }
+
+    let lag = 0;
+    for (const partition of latest) {
+      const committedOffset = committedByPartition.get(partition.partition);
+      // '-1' means the group never committed on this partition; with
+      // fromBeginning=false the consumer starts at latest, so lag is 0.
+      if (committedOffset === undefined || Number(committedOffset) < 0) {
+        continue;
+      }
+      lag += Math.max(Number(partition.offset) - Number(committedOffset), 0);
+    }
+    return lag;
+  }
+
   async subscribePattern<T>(
     prefix: string,
     handler: (msg: BrokerMessage<T>) => Promise<void>,

@@ -228,6 +228,13 @@ export class RabbitMQBrokerAdapter
     await this.channel!.assertQueue(topic, { durable: true });
   }
 
+  async getTopicLag(topic: string): Promise<number> {
+    this.assertActive('getTopicLag');
+    const queueName = `${this.resolveRunMode(topic)}-${topic}`;
+    const { messageCount } = await this.channel!.checkQueue(queueName);
+    return messageCount;
+  }
+
   async subscribePattern<T>(
     prefix: string,
     handler: (msg: BrokerMessage<T>) => Promise<void>,
