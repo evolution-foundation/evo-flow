@@ -1,0 +1,28 @@
+name: dev-scripts-smoke
+
+# Regression guard for EVO-1609: the `kill-backend` npm script must not match
+# (and therefore kill) its own invoking shell, while still matching real backend
+# process signatures. Pure pattern assertion — no processes are started or killed.
+
+on:
+  pull_request:
+    paths:
+      - 'package.json'
+      - 'scripts/kill-backend-pattern.test.sh'
+      - '.github/workflows/dev-scripts-smoke.yml'
+  push:
+    branches: [main, develop]
+    paths:
+      - 'package.json'
+      - 'scripts/kill-backend-pattern.test.sh'
+
+jobs:
+  kill-backend-pattern:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: kill-backend pattern must self-exclude and match real backends
+        run: npm run test:kill-backend

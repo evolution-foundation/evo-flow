@@ -204,6 +204,48 @@ npm run dev:event-receiver     # event-receiver   — inbound webhook receiver
 npm run dev:event-process      # event-process    — broker-driven event processor
 ```
 
+### `dev:single` and the `kill-backend` step
+
+`dev:single` is `npm run kill-backend && RUN_MODE=single npm run dev`. The
+`kill-backend` step clears leftover "production-style" backend processes
+(`node dist/main`, `node dist/main.js`, or the watch build `node … dist/main.js`)
+before Nest boots, using:
+
+```bash
+pkill -u "$(id -u)" -f '[n]ode .*dist/(src/)?main(\.js)?( |$)'
+```
+
+- The `[n]` class makes the pattern match a real `node …` process but **not** the
+  literal `[n]ode …` text in `pkill`'s own command line — so the script does not kill
+  its own `sh -c` parent (this was bug EVO-1609: `dev:single` aborted with `Terminated`
+  before boot). The self-exclusion protects the immediate shell; a wrapper that echoes
+  the literal command (e.g. `set -x` / CI logs) can still match.
+- `-u "$(id -u)"` scopes the scan to your own processes — it won't kill backends owned
+  by other users or by containers sharing the host PID namespace.
+- `(src/)?` is defensive: Evo Flow's `nest build` emits `dist/main.js` (tsc strips the
+  `src/` root), but the optional branch keeps the pattern matching a `dist/src/main.js`
+  layout too (the sibling evo-campaign scaffold / a future monorepo build).
+- `main(\.js)?( |$)` blocks lookalikes such as `dist/maintenance.js` / `dist/main-old.js`.
+
+Read-only preview of what `kill-backend` would target — should list only real
+`node …dist/…main` processes, never the shell running the command:
+
+```bash
+pgrep -af '[n]ode .*dist/(src/)?main(\.js)?( |$)'
+```
+
+The ERE is regression-guarded by `npm run test:kill-backend`
+(`scripts/kill-backend-pattern.test.sh`, also run in CI via
+`.github/workflows/dev-scripts-smoke.yml`) — it asserts the pattern matches the real
+prod/Docker/dev-watch signatures and never matches its own command line.
+
+> **Caveat.** `kill-backend` targets detached `node` processes; a foreground
+> `dev:single` / `nest start --watch` session should be stopped with Ctrl-C — if it
+> keeps holding the port, the next boot can fail with `EADDRINUSE`. Separately, a
+> `RUN_MODE=single` boot may still stop further down at the missing Kafka topic
+> `journey_trigger_kafka_queue` (see EVO-1571 / EVO-1200) — that is independent of this
+> fix.
+
 ---
 
 ## Architecture
