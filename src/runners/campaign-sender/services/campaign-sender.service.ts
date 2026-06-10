@@ -17,7 +17,10 @@ import {
 } from '../../../shared/crm-client/types/contact';
 import { PipelineMetricsService } from '../../../shared/metrics/pipeline-metrics.service';
 import type { CampaignsSendContract } from '../../../shared/broker/contracts/campaigns-send.contract';
-import { BatchDispatcherService } from './batch-dispatcher.service';
+import {
+  BatchDispatcherService,
+  type DispatchAbortReason,
+} from './batch-dispatcher.service';
 import { CampaignNotFoundError } from '../errors/campaign-not-found.error';
 import { CampaignNotConfiguredError } from '../errors/campaign-not-configured.error';
 
@@ -51,9 +54,11 @@ const DISPATCHABLE_STATUSES = new Set<CampaignStatus>([
  * design (NFR5 allows ≤30s propagation), trading staleness for not hammering
  * Postgres once per contact.
  *
- * Out of scope here by contract: rate limiting (4.4), retry with backoff (4.5,
- * a failed dispatch is FAILED right away), `campaigns.tracked` publishing (4.6)
- * and `campaigns.control` consumption (4.8).
+ * Dispatch goes through the BatchDispatcherService retry policy (4.5):
+ * transient failures back off exponentially, 4xx fails immediately, and a
+ * pause/stop during a backoff aborts the page without failing the contact.
+ * Out of scope here by contract: `campaigns.tracked` publishing (4.6) and
+ * `campaigns.control` consumption (4.8).
  */
 @Injectable()
 export class CampaignSenderService {
@@ -173,14 +178,26 @@ export class CampaignSenderService {
         continue;
       }
 
-      const dispatch = await this.batchDispatcher.dispatch({
+      const outcome = await this.batchDispatcher.dispatch({
         campaignId,
         inboxId: campaign.inboxId,
         template,
         contact,
+        shouldAbort: () => this.abortReasonFor(campaignId),
       });
 
-      if (dispatch.success) {
+      if (outcome.kind === 'aborted') {
+        // Mid-retry pause/stop (4.5): the contact stays PENDING (no FAILED),
+        // the batch is acked by returning normally, resume reprocesses it.
+        result.aborted = true;
+        this.logAborted(await this.currentCampaignStatus(campaignId), {
+          campaignId,
+          page,
+        });
+        break;
+      }
+
+      if (outcome.kind === 'sent') {
         const claimed = await this.markSent(row);
         if (claimed) {
           result.dispatched++;
@@ -194,12 +211,8 @@ export class CampaignSenderService {
           });
         }
       } else {
-        await this.markFailed(
-          row,
-          dispatch.error?.message ?? 'unknown dispatch error',
-          dispatch.statusCode,
-        );
-        this.metrics.incError(this.dispatchErrorCategory(dispatch.statusCode));
+        await this.markFailed(row, outcome.reason, outcome.statusCode);
+        this.metrics.incError(this.dispatchErrorCategory(outcome.statusCode));
         result.failed++;
       }
     }
@@ -245,6 +258,19 @@ export class CampaignSenderService {
     const cached = contacts.get(contactId);
     if (cached) return cached;
     return mapContactDto(await this.contactsClient.findById(contactId));
+  }
+
+  /**
+   * Abort probe handed to the dispatcher's retry loop (4.5): polled during
+   * backoff sleeps through the same TTL status cache, so a pause/stop stops
+   * in-flight retries without hammering Postgres.
+   */
+  private async abortReasonFor(
+    campaignId: string,
+  ): Promise<DispatchAbortReason | null> {
+    const status = await this.currentCampaignStatus(campaignId);
+    if (DISPATCHABLE_STATUSES.has(status)) return null;
+    return status === CampaignStatus.PAUSED ? 'paused' : 'stopped';
   }
 
   private async currentCampaignStatus(

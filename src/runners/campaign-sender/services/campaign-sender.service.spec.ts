@@ -62,7 +62,10 @@ describe('CampaignSenderService', () => {
     findByIds = jest.fn().mockResolvedValue([]);
     findById = jest.fn().mockResolvedValue(null);
     loadTemplate = jest.fn().mockResolvedValue(template);
-    dispatch = jest.fn().mockResolvedValue({ success: true, latencyMs: 5 });
+    dispatch = jest.fn().mockResolvedValue({
+      kind: 'sent',
+      result: { success: true, latencyMs: 5 },
+    });
     logger = { log: jest.fn(), warn: jest.fn(), error: jest.fn() };
     metrics = { incError: jest.fn(), incThroughput: jest.fn() };
 
@@ -101,7 +104,7 @@ describe('CampaignSenderService', () => {
         { id: `cc-${id}`, status: CampaignContactStatus.PENDING },
         {
           status: CampaignContactStatus.SENT,
-          sentAt: expect.any(Date),
+          sentAt: expect.any(Date) as Date,
         },
       );
     }
@@ -159,7 +162,10 @@ describe('CampaignSenderService', () => {
     jest.spyOn(Date, 'now').mockImplementation(() => now);
     dispatch.mockImplementation(() => {
       now += 6_000;
-      return Promise.resolve({ success: true, latencyMs: 5 });
+      return Promise.resolve({
+        kind: 'sent',
+        result: { success: true, latencyMs: 5 },
+      });
     });
 
     const result = await service.send(payload(['c1', 'c2']));
@@ -182,10 +188,10 @@ describe('CampaignSenderService', () => {
     contactFind.mockResolvedValue([row('c1')]);
     findByIds.mockResolvedValue([dto('c1')]);
     dispatch.mockResolvedValue({
-      success: false,
+      kind: 'failed',
+      reason: 'http_4xx: 422',
       statusCode: 422,
-      error: { code: '422', message: 'CRM API error: 422 - invalid' },
-      latencyMs: 5,
+      result: { success: false, statusCode: 422, latencyMs: 5 },
     });
 
     const result = await service.send(payload(['c1']));
@@ -199,28 +205,74 @@ describe('CampaignSenderService', () => {
       expect.objectContaining({
         contactId: 'c1',
         statusCode: 422,
-        reason: 'CRM API error: 422 - invalid',
+        reason: 'http_4xx: 422',
       }),
     );
     expect(metrics.incError).toHaveBeenCalledWith('dispatch_4xx');
     expect(result.failed).toBe(1);
   });
 
-  it('marks FAILED with dispatch_5xx category on a server error (no retry in this story)', async () => {
+  it('marks FAILED with dispatch_5xx category when the retry policy exhausts (4.5)', async () => {
     campaignFindOne.mockResolvedValue(campaign());
     contactFind.mockResolvedValue([row('c1')]);
     findByIds.mockResolvedValue([dto('c1')]);
     dispatch.mockResolvedValue({
-      success: false,
+      kind: 'failed',
+      reason: 'dispatch_exhausted_retries: ["503","503","503","503"]',
       statusCode: 503,
-      error: { code: '503', message: 'CRM API error: 503' },
-      latencyMs: 5,
+      result: { success: false, statusCode: 503, latencyMs: 5 },
     });
 
     const result = await service.send(payload(['c1']));
 
     expect(metrics.incError).toHaveBeenCalledWith('dispatch_5xx');
+    expect(logger.error).toHaveBeenCalledWith(
+      'campaign contact failed',
+      expect.objectContaining({
+        reason: 'dispatch_exhausted_retries: ["503","503","503","503"]',
+      }),
+    );
     expect(result.failed).toBe(1);
+  });
+
+  it('AC4 (4.5): an aborted retry leaves the contact PENDING and ends the page as aborted', async () => {
+    campaignFindOne.mockResolvedValue(campaign());
+    contactFind.mockResolvedValue([row('c1'), row('c2')]);
+    findByIds.mockResolvedValue([dto('c1'), dto('c2')]);
+    dispatch.mockResolvedValue({ kind: 'aborted', abortReason: 'stopped' });
+
+    const result = await service.send(payload(['c1', 'c2']));
+
+    expect(dispatch).toHaveBeenCalledTimes(1);
+    expect(contactUpdate).not.toHaveBeenCalled();
+    expect(result).toEqual({
+      dispatched: 0,
+      skipped: 0,
+      failed: 0,
+      aborted: true,
+    });
+  });
+
+  it('hands the dispatcher an abort probe that reflects the campaign status', async () => {
+    campaignFindOne.mockResolvedValue(campaign());
+    contactFind.mockResolvedValue([row('c1')]);
+    findByIds.mockResolvedValue([dto('c1')]);
+
+    await service.send(payload(['c1']));
+
+    const [[input]] = dispatch.mock.calls as [
+      [{ shouldAbort: () => Promise<'paused' | 'stopped' | null> }],
+    ];
+    await expect(input.shouldAbort()).resolves.toBeNull();
+
+    // Expire the TTL cache and flip the campaign: the probe must see it.
+    const realNow = Date.now();
+    jest.spyOn(Date, 'now').mockReturnValue(realNow + 6_000);
+    campaignFindOne.mockResolvedValue({
+      id: CAMPAIGN_ID,
+      status: CampaignStatus.STOPPED,
+    });
+    await expect(input.shouldAbort()).resolves.toBe('stopped');
   });
 
   it('throws terminal CampaignNotFoundError when the campaign does not exist', async () => {
