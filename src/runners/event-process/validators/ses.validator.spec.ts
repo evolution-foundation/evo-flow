@@ -41,6 +41,19 @@ describe('SesValidator', () => {
     expect(mockValidate).not.toHaveBeenCalled();
   });
 
+  // EVO-1210 B2: a forged cert hosted on a public S3 bucket is still
+  // *.amazonaws.com but is NOT a real SNS signing host — must be rejected.
+  it('rejects a cert hosted on a non-SNS amazonaws host (S3 bucket forgery)', async () => {
+    expect(
+      await new SesValidator().validate(
+        message({
+          SigningCertURL: 'https://attacker-bucket.s3.amazonaws.com/cert.pem',
+        }),
+      ),
+    ).toBe(false);
+    expect(mockValidate).not.toHaveBeenCalled();
+  });
+
   it('rejects when the SNS signature does not verify', async () => {
     mockValidate.mockImplementation(
       (_m: unknown, cb: (e: Error | null) => void) =>
