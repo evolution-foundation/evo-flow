@@ -29,6 +29,7 @@ export interface SendResult {
 }
 
 const DEFAULT_STATUS_CACHE_TTL_MS = 5_000;
+const STATUS_CACHE_MAX_ENTRIES = 1_000;
 
 const DISPATCHABLE_STATUSES = new Set<CampaignStatus>([
   CampaignStatus.SENDING,
@@ -111,13 +112,25 @@ export class CampaignSenderService {
       payload.templateId,
     );
 
+    // Dedupe defensively: the packer never repeats an id within a page, but a
+    // duplicated id would dispatch twice (the in-memory row stays PENDING
+    // after the first send — the tabular lock only guards cross-process races).
+    const contactIds = Array.from(new Set(payload.contactIds));
+
     const rows = await this.campaignContactRepository.find({
-      where: { campaignId, contactId: In(payload.contactIds) },
+      where: { campaignId, contactId: In(contactIds) },
     });
     const rowByContactId = new Map(rows.map((row) => [row.contactId, row]));
-    const contacts = await this.hydrateContacts(payload.contactIds);
 
-    for (const contactId of payload.contactIds) {
+    // Hydrate only contacts that can actually dispatch — a redelivered page of
+    // already-SENT contacts must skip cheaply (NFR16), not re-fetch the whole
+    // batch from the CRM.
+    const pendingIds = contactIds.filter(
+      (id) => rowByContactId.get(id)?.status === CampaignContactStatus.PENDING,
+    );
+    const contacts = await this.hydrateContacts(pendingIds);
+
+    for (const contactId of contactIds) {
       const row = rowByContactId.get(contactId);
       if (!row) {
         result.skipped++;
@@ -252,7 +265,17 @@ export class CampaignSenderService {
   }
 
   private cacheStatus(campaignId: string, status: CampaignStatus): void {
-    this.statusCache.set(campaignId, { status, fetchedAt: Date.now() });
+    const now = Date.now();
+    // The consumer is long-lived: prune expired entries so the cache cannot
+    // grow unbounded across the campaigns this instance ever touched.
+    if (this.statusCache.size >= STATUS_CACHE_MAX_ENTRIES) {
+      for (const [key, entry] of this.statusCache) {
+        if (now - entry.fetchedAt >= this.statusCacheTtlMs()) {
+          this.statusCache.delete(key);
+        }
+      }
+    }
+    this.statusCache.set(campaignId, { status, fetchedAt: now });
   }
 
   private statusCacheTtlMs(): number {
@@ -317,7 +340,7 @@ export class CampaignSenderService {
       { id: row.id, status: CampaignContactStatus.PENDING },
       { status: CampaignContactStatus.FAILED },
     );
-    this.logger.error('dispatch failed', {
+    this.logger.error('campaign contact failed', {
       campaignId: row.campaignId,
       contactId: row.contactId,
       statusCode,

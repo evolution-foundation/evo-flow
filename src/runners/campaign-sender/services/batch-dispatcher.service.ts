@@ -85,7 +85,11 @@ export class BatchDispatcherService {
     };
     for (const [key, value] of Object.entries(contact.customAttributes ?? {})) {
       values[`contact.${key}`] =
-        value === null || value === undefined ? '' : String(value);
+        value === null || value === undefined
+          ? ''
+          : typeof value === 'object'
+            ? JSON.stringify(value)
+            : String(value);
     }
 
     let rendered = content;

@@ -129,8 +129,22 @@ describe('CampaignSenderService', () => {
       'skipped: already sent',
       expect.objectContaining({ contactId: 'c1' }),
     );
+    // Only the still-PENDING contact is hydrated from the CRM (NFR16).
+    expect(findByIds).toHaveBeenCalledWith(['c2']);
     expect(result.skipped).toBe(1);
     expect(result.dispatched).toBe(1);
+  });
+
+  it('dispatches a duplicated contactId only once', async () => {
+    campaignFindOne.mockResolvedValue(campaign());
+    contactFind.mockResolvedValue([row('c1')]);
+    findByIds.mockResolvedValue([dto('c1')]);
+
+    const result = await service.send(payload(['c1', 'c1', 'c1']));
+
+    expect(dispatch).toHaveBeenCalledTimes(1);
+    expect(result.dispatched).toBe(1);
+    expect(result.skipped).toBe(0);
   });
 
   it('AC3: aborts mid-batch when the campaign flips to Paused after the status cache expires', async () => {
@@ -181,7 +195,7 @@ describe('CampaignSenderService', () => {
       { status: CampaignContactStatus.FAILED },
     );
     expect(logger.error).toHaveBeenCalledWith(
-      'dispatch failed',
+      'campaign contact failed',
       expect.objectContaining({
         contactId: 'c1',
         statusCode: 422,
