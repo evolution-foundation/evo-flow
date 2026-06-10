@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { JourneySession } from '../../journeys/entities/journey-session.entity';
 import { BaseCacheService } from './base-cache.service';
@@ -47,6 +47,15 @@ export class JourneySessionCacheService extends BaseCacheService<
     repository: Repository<JourneySession>,
     eventEmitter: EventEmitter2,
   ) {
+    // EVO-1645: sessions ARE shared across instances. In BaseCacheService's
+    // (inverted vs. convention) naming, L1 = Redis (always on, shared) and
+    // L2 = per-instance in-memory LRU. `enableL2Cache: false` only disables
+    // the local memory layer — deliberately, because a per-instance LRU would
+    // serve stale session state when the journey worker runs >1 replica.
+    // Reads go Redis -> database, so a session can be seeded externally
+    // (E2E/QA) either by writing the Redis key
+    // `evo-campaign:journey-session:<id>` (+ the `:index` set) or by inserting
+    // a journey_sessions row — see src/modules/journeys/README.md.
     const cacheConfig: CacheConfig = {
       redisKeyPrefix: 'evo-campaign:journey-session',
       memoryMaxSize: 2000,
@@ -170,7 +179,7 @@ export class JourneySessionCacheService extends BaseCacheService<
 
   protected async getMultipleFromDatabase(ids: string[]): Promise<JourneySession[]> {
     return this.repository.find({
-      where: { id: { $in: ids } as any },
+      where: { id: In(ids) },
     });
   }
 

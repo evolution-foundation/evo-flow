@@ -29,6 +29,11 @@ export abstract class BaseCacheService<
   protected readonly config = getProcessingConfig();
   protected readonly cacheConfig: CacheConfig;
 
+  // NOTE: the L1/L2 naming here is inverted vs. the usual convention —
+  // L1 = Redis (shared across instances, always on) and L2 = in-memory LRU
+  // (local to the instance, gated by `enableL2Cache`). Disabling "L2" does
+  // NOT make the cache in-process-only; it removes the local layer.
+
   // Redis L1 cache - shared across instances
   protected redis: Redis;
 

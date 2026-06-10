@@ -392,7 +392,9 @@ export const journeyExecutionActivities: JourneyExecutionActivities = {
       // Initialize cache services
       await initializeCacheServices();
 
-      // 🚀 PERFORMANCE: Find the session - ONLY from cache (no database fallback)
+      // Find the session: shared Redis first, then database fallback (the
+      // cache's get() falls through Redis -> DB). A session seeded externally
+      // in either layer is therefore visible here — see EVO-1645.
       log.info('Searching for session in cache', {
         sessionId: input.sessionId,
       });
