@@ -26,10 +26,20 @@ const RUNNER_MODES = [
   'event-process',
 ];
 
+interface KeywordPattern {
+  keyword: string;
+  pattern: RegExp;
+}
+
+interface SanctionedPattern {
+  pattern: RegExp;
+  reason: string;
+}
+
 // Substring matches on purpose: \b is camelCase-blind (`getAccountById` has
 // no word boundary before "Account"), and in a guard a loud false positive
 // beats a silent miss.
-const FORBIDDEN_PATTERNS: Array<{ keyword: string; pattern: RegExp }> = [
+const FORBIDDEN_PATTERNS: KeywordPattern[] = [
   { keyword: 'accountId', pattern: /accountId/i },
   { keyword: 'account_id', pattern: /account_id/i },
   { keyword: 'Account.', pattern: /account\./i },
@@ -39,16 +49,12 @@ const FORBIDDEN_PATTERNS: Array<{ keyword: string; pattern: RegExp }> = [
 ];
 
 /**
- * Sanctioned tokens, STRIPPED from each line before the scan (never a
- * whole-line exemption — that would let `routeByTenant(); // tenantDb` slip
- * through). Keep each entry justified — this list is the audit trail of every
- * sanctioned mention.
+ * Sanctioned tokens, STRIPPED from each line before the scan. Unlike
+ * ALLOWED_LINE_PATTERNS below (an anchored match of one entire literal
+ * line), a token exempts a single identifier — never the rest of its line,
+ * so `routeByTenant(); // TenantDbContext` still fails. Keep each entry
+ * justified — this list is the audit trail of every sanctioned mention.
  */
-interface SanctionedPattern {
-  pattern: RegExp;
-  reason: string;
-}
-
 const ALLOWED_TOKENS: SanctionedPattern[] = [
   {
     // The DB seam (ADR14, story 10.1b): single-account in community, the RLS
@@ -236,6 +242,14 @@ describe('single-account invariant (FR44 / EVO-1228)', () => {
     ]);
   });
 
+  it('requires every sanctioned token to strip globally with glue-proof anchors', () => {
+    for (const { pattern } of ALLOWED_TOKENS) {
+      expect(pattern.flags).toContain('g');
+      expect(pattern.source.startsWith('(?<![A-Za-z0-9_])')).toBe(true);
+      expect(pattern.source.endsWith('(?![A-Za-z0-9_])')).toBe(true);
+    }
+  });
+
   describe('neutral-line exemptions (AC3)', () => {
     const NEUTRAL_LOG_ALLOWLIST = [
       {
@@ -277,7 +291,7 @@ describe('single-account invariant (FR44 / EVO-1228)', () => {
       ]);
     });
 
-    it('requires every entry to anchor the whole line and stay stateless', () => {
+    it('requires every entry to be anchored, stateless and wildcard-free', () => {
       for (const { pattern } of [
         ...ALLOWED_LINE_PATTERNS,
         ...NEUTRAL_LOG_ALLOWLIST,
@@ -285,6 +299,9 @@ describe('single-account invariant (FR44 / EVO-1228)', () => {
         expect(pattern.source.startsWith('^')).toBe(true);
         expect(pattern.source.endsWith('$')).toBe(true);
         expect(pattern.flags).not.toContain('g');
+        // `.*` / `.+` / negated classes would exempt arbitrary content on a
+        // matching line — the gutting vector the anchors exist to prevent.
+        expect(pattern.source).not.toMatch(/\.[*+]|\[\^/);
       }
     });
   });
