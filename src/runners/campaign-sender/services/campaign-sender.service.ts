@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
 import { In, Repository } from 'typeorm';
 import {
   Campaign,
@@ -16,7 +16,15 @@ import {
   type HydratedContact,
 } from '../../../shared/crm-client/types/contact';
 import { PipelineMetricsService } from '../../../shared/metrics/pipeline-metrics.service';
+import {
+  IMESSAGE_BROKER,
+  IMessageBroker,
+} from '../../../shared/broker/interfaces/message-broker.interface';
 import type { CampaignsSendContract } from '../../../shared/broker/contracts/campaigns-send.contract';
+import {
+  CAMPAIGNS_TRACKED_TOPIC,
+  CampaignsTrackedContract,
+} from '../../../shared/broker/contracts/campaigns-tracked.contract';
 import {
   BatchDispatcherService,
   type DispatchAbortReason,
@@ -73,6 +81,7 @@ export class CampaignSenderService {
     private readonly logger: CustomLoggerService,
     private readonly metrics: PipelineMetricsService,
     private readonly batchDispatcher: BatchDispatcherService,
+    @Inject(IMESSAGE_BROKER) private readonly broker: IMessageBroker,
   ) {}
 
   private get campaignRepository(): Repository<Campaign> {
@@ -223,7 +232,59 @@ export class CampaignSenderService {
       totalPages,
       ...result,
     });
+
+    // Close the progress loop (story 4.6 / EVO-1220): a fully-processed page
+    // publishes `campaigns.tracked`. An aborted page (pause/stop) is NOT
+    // reported — it stays unfinished and is reprocessed on resume, so reporting
+    // it now would let the aggregator complete a campaign prematurely.
+    if (!result.aborted) {
+      await this.publishTracked(payload);
+    }
     return result;
+  }
+
+  /**
+   * Publish counts derived from the DB truth for this page, not from this run's
+   * dispatch deltas. A page reprocessed after a publish failure (broker
+   * at-least-once) finds its contacts already SENT and would report
+   * `dispatched=0`; counting `CampaignContact.status` instead keeps the page's
+   * `sentCount`/`failedCount` stable across redeliveries, so the aggregator's
+   * per-page increment stays correct.
+   */
+  private async publishTracked(payload: CampaignsSendContract): Promise<void> {
+    const { campaignId, page, totalPages } = payload;
+    const contactIds = Array.from(new Set(payload.contactIds));
+
+    const rows = await this.campaignContactRepository.find({
+      where: { campaignId, contactId: In(contactIds) },
+      select: { contactId: true, status: true },
+    });
+
+    let sentCount = 0;
+    let failedCount = 0;
+    for (const row of rows) {
+      if (row.status === CampaignContactStatus.SENT) sentCount++;
+      else if (row.status === CampaignContactStatus.FAILED) failedCount++;
+    }
+
+    const tracked: CampaignsTrackedContract = {
+      campaignId,
+      page,
+      sentCount,
+      failedCount,
+      completed: page === totalPages,
+      correlationId: payload.correlationId,
+    };
+    await this.broker.publish(CAMPAIGNS_TRACKED_TOPIC, tracked);
+
+    this.logger.log('campaign.tracked.published', {
+      campaignId,
+      page,
+      totalPages,
+      sentCount,
+      failedCount,
+      completed: tracked.completed,
+    });
   }
 
   /**

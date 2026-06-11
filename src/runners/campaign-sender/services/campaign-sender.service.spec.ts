@@ -10,6 +10,7 @@ import {
   CampaignContactStatus,
 } from '../../../modules/campaigns/entities/campaign-contact.entity';
 import type { CampaignsSendContract } from '../../../shared/broker/contracts/campaigns-send.contract';
+import { CAMPAIGNS_TRACKED_TOPIC } from '../../../shared/broker/contracts/campaigns-tracked.contract';
 import type { ContactDto } from '../../../shared/crm-client/types/contact';
 
 const CAMPAIGN_ID = 'camp-1';
@@ -52,6 +53,7 @@ describe('CampaignSenderService', () => {
   let dispatch: jest.Mock;
   let logger: { log: jest.Mock; warn: jest.Mock; error: jest.Mock };
   let metrics: { incError: jest.Mock; incThroughput: jest.Mock };
+  let broker: { publish: jest.Mock };
 
   const template = { id: 'tpl-1', name: 'welcome' };
 
@@ -68,6 +70,7 @@ describe('CampaignSenderService', () => {
     });
     logger = { log: jest.fn(), warn: jest.fn(), error: jest.fn() };
     metrics = { incError: jest.fn(), incThroughput: jest.fn() };
+    broker = { publish: jest.fn().mockResolvedValue(undefined) };
 
     const db = {
       getRepository: (entity: unknown) =>
@@ -82,6 +85,7 @@ describe('CampaignSenderService', () => {
       logger as any,
       metrics as any,
       { loadTemplate, dispatch } as any,
+      broker as any,
     );
   });
 
@@ -371,5 +375,56 @@ describe('CampaignSenderService', () => {
 
     expect(dispatch).not.toHaveBeenCalled();
     expect(result.skipped).toBe(1);
+  });
+
+  it('EVO-1220: publishes campaigns.tracked with DB-truth counts and completed on the last page', async () => {
+    campaignFindOne.mockResolvedValue(campaign());
+    // First find loads PENDING rows; the post-batch publish re-reads them as
+    // SENT (the DB truth the aggregator must increment by).
+    contactFind
+      .mockResolvedValueOnce([row('c1'), row('c2')])
+      .mockResolvedValueOnce([
+        row('c1', CampaignContactStatus.SENT),
+        row('c2', CampaignContactStatus.SENT),
+      ]);
+    findByIds.mockResolvedValue([dto('c1'), dto('c2')]);
+
+    await service.send(payload(['c1', 'c2']));
+
+    expect(broker.publish).toHaveBeenCalledWith(CAMPAIGNS_TRACKED_TOPIC, {
+      campaignId: CAMPAIGN_ID,
+      page: 1,
+      sentCount: 2,
+      failedCount: 0,
+      completed: true,
+      correlationId: '11111111-1111-4111-8111-111111111111',
+    });
+  });
+
+  it('EVO-1220: marks completed=false when the page is not the last one', async () => {
+    campaignFindOne.mockResolvedValue(campaign());
+    contactFind
+      .mockResolvedValueOnce([row('c1')])
+      .mockResolvedValueOnce([row('c1', CampaignContactStatus.SENT)]);
+    findByIds.mockResolvedValue([dto('c1')]);
+
+    await service.send({ ...payload(['c1']), page: 1, totalPages: 3 });
+
+    expect(broker.publish).toHaveBeenCalledWith(
+      CAMPAIGNS_TRACKED_TOPIC,
+      expect.objectContaining({ page: 1, completed: false, sentCount: 1 }),
+    );
+  });
+
+  it('EVO-1220: does NOT publish campaigns.tracked when the page is aborted', async () => {
+    campaignFindOne.mockResolvedValue(campaign());
+    contactFind.mockResolvedValue([row('c1'), row('c2')]);
+    findByIds.mockResolvedValue([dto('c1'), dto('c2')]);
+    dispatch.mockResolvedValue({ kind: 'aborted', abortReason: 'stopped' });
+
+    const result = await service.send(payload(['c1', 'c2']));
+
+    expect(result.aborted).toBe(true);
+    expect(broker.publish).not.toHaveBeenCalled();
   });
 });
