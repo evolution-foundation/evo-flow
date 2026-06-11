@@ -49,6 +49,17 @@ const ALLOWED_TOKENS: Array<{ pattern: RegExp; reason: string }> = [
   },
 ];
 
+/**
+ * Neutral-line exemptions (AC3): each pattern MUST match the ENTIRE trimmed
+ * line (`^...$`, no `g` flag — enforced by a self-test below). A line that
+ * fully matches is skipped; one extra character (e.g. routing glued onto the
+ * same line) breaks the anchor and the guard fires. Empty today — no runner
+ * has a neutral mention. Example entry for a log-only field:
+ *   { pattern: /^logger\.log\(\{ accountId: ingestion\.accountId \}\);$/,
+ *     reason: 'EVO-XXXX log-only field, no flow impact' },
+ */
+const ALLOWED_LINE_PATTERNS: Array<{ pattern: RegExp; reason: string }> = [];
+
 interface Violation {
   file: string;
   line: number;
@@ -67,9 +78,16 @@ function collectSourceFiles(dir: string): string[] {
   });
 }
 
-function scanContent(content: string, fileLabel: string): Violation[] {
+function scanContent(
+  content: string,
+  fileLabel: string,
+  allowedLines: Array<{ pattern: RegExp; reason: string }> = ALLOWED_LINE_PATTERNS,
+): Violation[] {
   const violations: Violation[] = [];
   content.split('\n').forEach((text, index) => {
+    if (allowedLines.some(({ pattern }) => pattern.test(text.trim()))) {
+      return;
+    }
     const scannable = ALLOWED_TOKENS.reduce(
       (line, { pattern }) => line.replace(pattern, ''),
       text,
@@ -164,5 +182,58 @@ describe('single-account invariant (FR44 / EVO-1228)', () => {
     expect(violations).toEqual([
       expect.objectContaining({ line: 1, keyword: 'tenant' }),
     ]);
+  });
+
+  describe('neutral-line exemptions (AC3)', () => {
+    const NEUTRAL_LOG_ALLOWLIST = [
+      {
+        pattern: /^logger\.log\(\{ accountId: ingestion\.accountId \}\);$/,
+        reason: 'test fixture: log-only field, no flow impact',
+      },
+    ];
+
+    it('exempts a documented neutral log mention', () => {
+      const violations = scanContent(
+        '  logger.log({ accountId: ingestion.accountId });',
+        'event-process/example.ts',
+        NEUTRAL_LOG_ALLOWLIST,
+      );
+
+      expect(violations).toEqual([]);
+    });
+
+    it('still fails the same mention when it is not allowlisted', () => {
+      const violations = scanContent(
+        '  logger.log({ accountId: ingestion.accountId });',
+        'event-process/example.ts',
+      );
+
+      expect(violations).toEqual([
+        expect.objectContaining({ line: 1, keyword: 'accountId' }),
+      ]);
+    });
+
+    it('does not let an allowlisted line launder routing appended to it', () => {
+      const violations = scanContent(
+        'logger.log({ accountId: ingestion.accountId }); routeByAccount(accountId);',
+        'event-process/example.ts',
+        NEUTRAL_LOG_ALLOWLIST,
+      );
+
+      expect(violations).toEqual([
+        expect.objectContaining({ line: 1, keyword: 'accountId' }),
+      ]);
+    });
+
+    it('requires every entry to anchor the whole line and stay stateless', () => {
+      for (const { pattern } of [
+        ...ALLOWED_LINE_PATTERNS,
+        ...NEUTRAL_LOG_ALLOWLIST,
+      ]) {
+        expect(pattern.source.startsWith('^')).toBe(true);
+        expect(pattern.source.endsWith('$')).toBe(true);
+        expect(pattern.flags).not.toContain('g');
+      }
+    });
   });
 });
