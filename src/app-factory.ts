@@ -66,6 +66,11 @@ export class AppFactory {
     return [RunMode.SINGLE, RunMode.CAMPAIGN_SENDER].includes(config.runMode);
   }
 
+  static shouldStartCampaignTracker(): boolean {
+    const config = getProcessingConfig();
+    return [RunMode.SINGLE, RunMode.CAMPAIGN_TRACKER].includes(config.runMode);
+  }
+
   static shouldStartEventReceiver(): boolean {
     const config = getProcessingConfig();
     return [RunMode.SINGLE, RunMode.EVENT_RECEIVER].includes(config.runMode);

@@ -106,6 +106,11 @@ export class BootstrapService {
           '📤 CAMPAIGN SENDER MODE: Dispatch stage (stub — module pending)',
         );
         break;
+      case RunMode.CAMPAIGN_TRACKER:
+        this.logger.log(
+          '📈 CAMPAIGN TRACKER MODE: Progress aggregation stage (consumes campaigns.tracked)',
+        );
+        break;
       case RunMode.EVENT_RECEIVER:
         this.logger.log(
           '📡 EVENT RECEIVER MODE: Inbound webhook receiver (POST /webhooks/*)',

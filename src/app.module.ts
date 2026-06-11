@@ -41,6 +41,7 @@ import { MessagingChannelsModule } from './shared/messaging-channels/messaging-c
 import { EventReceiverModule } from './runners/event-receiver/event-receiver.module';
 import { CampaignPackerModule } from './runners/campaign-packer/campaign-packer.module';
 import { CampaignSenderModule } from './runners/campaign-sender/campaign-sender.module';
+import { CampaignTrackerModule } from './runners/campaign-tracker/campaign-tracker.module';
 import { EventProcessModule } from './runners/event-process/event-process.module';
 import { AppFactory } from './app-factory';
 import {
@@ -107,6 +108,9 @@ export class AppModule {
     }
     if (AppFactory.shouldStartCampaignSender()) {
       conditionalImports.push(CampaignSenderModule);
+    }
+    if (AppFactory.shouldStartCampaignTracker()) {
+      conditionalImports.push(CampaignTrackerModule);
     }
     if (AppFactory.shouldStartEventProcess()) {
       conditionalImports.push(EventProcessModule);
