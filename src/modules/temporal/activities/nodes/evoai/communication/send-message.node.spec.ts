@@ -1,4 +1,5 @@
 import { SendMessageNode, SendMessageNodeInput } from './send-message.node';
+import { CrmMessageTemplateParams } from '../../../../../../shared/crm-client/crm-client.service';
 
 describe('SendMessageNode', () => {
   let node: SendMessageNode;
@@ -171,6 +172,118 @@ describe('SendMessageNode', () => {
       expect(getInboxMessageTemplates).not.toHaveBeenCalled();
       expect(sendMessage).not.toHaveBeenCalled();
       expect(result.success).toBe(true);
+    });
+  });
+
+  describe('template variable mappings (EVO-1267)', () => {
+    const sentArg = (index: number): unknown =>
+      (sendMessage.mock.calls as unknown[][])[0][index];
+    const sentEnvelope = (): CrmMessageTemplateParams =>
+      sentArg(4) as CrmMessageTemplateParams;
+
+    const mappedInput: SendMessageNodeInput = {
+      ...templateInput,
+      nodeData: {
+        ...templateInput.nodeData,
+        templateParams: undefined,
+        templateVariables: [
+          { variable: 'first_name', source: 'contact', path: 'name' },
+          { variable: 'company', source: 'fixed', value: 'Evo' },
+        ],
+      },
+    };
+
+    beforeEach(() => {
+      getInboxMessageTemplates.mockResolvedValue({
+        success: true,
+        data: { success: true, data: [template] },
+      });
+    });
+
+    it('maps root sources to {{root.path}} strings for CRM-side resolution', async () => {
+      await node.execute(mappedInput);
+
+      const envelope = sentEnvelope();
+      expect(envelope.processed_params).toEqual({
+        first_name: '{{contact.name}}',
+        company: 'Evo',
+      });
+      expect(envelope.variable_fallbacks).toBeUndefined();
+    });
+
+    it('passes expressions through untouched (multi-placeholder strings)', async () => {
+      await node.execute({
+        ...mappedInput,
+        nodeData: {
+          ...mappedInput.nodeData,
+          templateVariables: [
+            {
+              variable: 'first_name',
+              source: 'expression',
+              expression: '{{contact.name}} ({{conversation.display_id}})',
+            },
+          ],
+        },
+      });
+
+      expect(sentEnvelope().processed_params?.first_name).toBe(
+        '{{contact.name}} ({{conversation.display_id}})',
+      );
+    });
+
+    it('ships fallbacks in variable_fallbacks for blank server-side resolutions', async () => {
+      await node.execute({
+        ...mappedInput,
+        nodeData: {
+          ...mappedInput.nodeData,
+          templateVariables: [
+            {
+              variable: 'first_name',
+              source: 'contact',
+              path: 'name',
+              fallback: 'amigo',
+            },
+          ],
+        },
+      });
+
+      expect(sentEnvelope().variable_fallbacks).toEqual({
+        first_name: 'amigo',
+      });
+    });
+
+    it('mapping wins over a plain templateParams entry for the same variable', async () => {
+      await node.execute({
+        ...mappedInput,
+        nodeData: {
+          ...mappedInput.nodeData,
+          templateParams: { first_name: 'Ana' },
+          templateVariables: [
+            { variable: 'first_name', source: 'contact', path: 'name' },
+          ],
+        },
+      });
+
+      expect(sentEnvelope().processed_params?.first_name).toBe(
+        '{{contact.name}}',
+      );
+    });
+
+    it('keeps legacy templateParams flows untouched when no mappings exist', async () => {
+      await node.execute(templateInput);
+
+      expect(sentEnvelope().processed_params).toEqual({
+        first_name: 'Ana',
+      });
+      expect(sentEnvelope().variable_fallbacks).toBeUndefined();
+    });
+
+    it('renders mapped root paths into local fallback content as-is for the CRM to resolve', async () => {
+      await node.execute(mappedInput);
+
+      expect(sentArg(1)).toBe(
+        'Olá {{contact.name}}, bem-vinda ao Evo!',
+      );
     });
   });
 });

@@ -44,6 +44,9 @@ export interface CrmMessageTemplateParams {
   language?: string;
   category?: string;
   processed_params?: Record<string, unknown>;
+  // EVO-1267: per-variable fallback applied by the CRM when a {{root.path}}
+  // value resolves blank server-side.
+  variable_fallbacks?: Record<string, string>;
 }
 
 /**
