@@ -2,19 +2,15 @@ import {
   proxyActivities,
   defineSignal,
   setHandler,
-  condition,
   workflowInfo,
-  sleep,
   log,
-  ActivityFailure,
-  ApplicationFailure,
+  uuid4,
 } from '@temporalio/workflow';
 import type {
   CampaignExecutionActivities,
   ComputeCampaignAudienceOutput,
   CreateCampaignBatchesOutput,
 } from '../activities/campaign-execution.activities';
-import type { CampaignMessageSendingActivities } from '../activities/campaign-message-sending.activities';
 
 const CAMPAIGN_STATUS = {
   DRAFT: 0,
@@ -36,18 +32,6 @@ const activities = proxyActivities<CampaignExecutionActivities>({
     maximumInterval: '1m',
   },
 });
-
-// Define message sending activities proxy with longer timeout
-const messageSendingActivities =
-  proxyActivities<CampaignMessageSendingActivities>({
-    startToCloseTimeout: '30 minutes', // Longer timeout for batch sending
-    retry: {
-      maximumAttempts: 3,
-      initialInterval: '10s',
-      backoffCoefficient: 2,
-      maximumInterval: '5m',
-    },
-  });
 
 // ==================== Workflow Input/Output ====================
 
@@ -98,9 +82,6 @@ export const cancelCampaignSignal = defineSignal<[]>('cancelCampaign');
 export async function CampaignExecutionWorkflow(
   input: CampaignExecutionInput,
 ): Promise<CampaignExecutionState> {
-  const batchSize = input.batchSize || 1000;
-  const delayBetweenBatches = input.delayBetweenBatches || 0;
-
   // Initialize workflow state
   const state: CampaignExecutionState = {
     campaignId: input.campaignId,
@@ -112,47 +93,43 @@ export async function CampaignExecutionWorkflow(
     failedBatches: [],
     startedAt: new Date().toISOString(),
   };
-  let isPaused = false;
-  let isCancelled = false;
+  // Deterministic UUID (replay-safe) shared across every downstream message
+  // and structured log in the distributed pipeline (campaigns.pack/send/tracked).
+  const correlationId = uuid4();
   const workflowId = workflowInfo().workflowId;
 
+  // Lifecycle signals are kept so CampaignWorkflowService's signal API does not
+  // fail, but the workflow now returns in <5s after the hand-off — real
+  // pause/stop of an in-flight dispatch is delivered by story 4.8 via
+  // `campaigns.control`. These handlers only annotate the returned state.
   setHandler(pauseCampaignSignal, () => {
-    isPaused = true;
     state.status = 'paused';
-    log.info('Campaign workflow paused by signal', {
+    log.info('Campaign workflow pause signal received', {
       campaignId: input.campaignId,
     });
   });
 
   setHandler(resumeCampaignSignal, () => {
-    isPaused = false;
-    if (!isCancelled) {
-      state.status = 'sending';
-    }
-    log.info('Campaign workflow resumed by signal', {
+    log.info('Campaign workflow resume signal received', {
       campaignId: input.campaignId,
     });
   });
 
   setHandler(cancelCampaignSignal, () => {
-    isCancelled = true;
     state.status = 'cancelled';
     state.completedAt = new Date().toISOString();
-    log.info('Campaign workflow cancellation requested by signal', {
+    log.info('Campaign workflow cancellation signal received', {
       campaignId: input.campaignId,
     });
   });
 
-  log.info('🚀 Starting Campaign Execution Workflow', {
+  log.info('🚀 Starting Campaign Execution Workflow (distributed dispatch)', {
     campaignId: input.campaignId,
-    batchSize,
-    skipAudienceComputation: input.skipAudienceComputation,
+    correlationId,
   });
 
   try {
-    // ========== STEP 1: Get Campaign Data ==========
-    log.info('📋 Step 1: Getting campaign data');
-
+    // ========== STEP 1: Validate Campaign ==========
     const campaign = await activities.getCampaignData({
       campaignId: input.campaignId,
     });
@@ -163,235 +140,45 @@ export async function CampaignExecutionWorkflow(
       channelType: campaign.channelType,
     });
 
-    // ========== STEP 2: Update Status to SENDING ==========
+    // ========== STEP 2: Mark Campaign as Sending ==========
     await activities.updateCampaignStatus({
       campaignId: input.campaignId,
       status: CAMPAIGN_STATUS.SENDING,
     });
 
-    state.status = 'computing_audience';
-
-    // ========== STEP 3: Compute Audience (if needed) ==========
-    if (!input.skipAudienceComputation || campaign.isRunSegment) {
-      log.info('👥 Step 2: Computing campaign audience');
-
-      state.audienceResult = await activities.computeCampaignAudience({
-        campaignId: input.campaignId,
-      });
-
-      log.info('Audience computed successfully', {
-        totalContacts: state.audienceResult.totalContacts,
-        validContacts: state.audienceResult.validContacts,
-        invalidContacts: state.audienceResult.invalidContacts,
-      });
-
-      // Check if we have valid contacts
-      if (state.audienceResult.validContacts === 0) {
-        throw ApplicationFailure.create({
-          message: 'No valid contacts found for campaign',
-          nonRetryable: true,
-        });
-      }
-    } else {
-      log.info('⏭️  Skipping audience computation (already computed)');
-    }
-
-    // ========== STEP 4: Create Batches ==========
-    log.info('📦 Step 3: Creating campaign batches');
-
-    state.status = 'creating_batches';
-
-    state.batchesResult = await activities.createCampaignBatches({
-      campaignId: input.campaignId,
-      batchSize,
-    });
-
-    state.totalBatches = state.batchesResult.totalBatches;
-    await activities.updateExecutionProgress({
-      campaignId: input.campaignId,
-      workflowId,
-      status: 'running',
-      totalContacts: state.batchesResult.totalContacts,
-      totalBatches: state.totalBatches,
-    });
-
-    log.info('Batches created successfully', {
-      totalBatches: state.totalBatches,
-      totalContacts: state.batchesResult.totalContacts,
-      batchSize,
-    });
-
-    // ========== STEP 5: Process Each Batch ==========
-    log.info('📨 Step 4: Processing batches');
-
+    // ========== STEP 3: Hand off to the distributed pipeline ==========
+    // Publish a single `campaigns.pack` and return. The packer resolves the
+    // audience + paginates, the sender dispatches, and the campaign-tracker
+    // aggregates `campaigns.tracked` and transitions the campaign to Completed.
+    // The workflow waits on none of it (4.6 / EVO-1220 is broker-native, not a
+    // Temporal signal), so this returns in <5s instead of blocking for the whole
+    // send.
     state.status = 'sending';
-
-    for (let batchNumber = 1; batchNumber <= state.totalBatches; batchNumber++) {
-      if (isCancelled) {
-        break;
-      }
-
-      if (isPaused) {
-        await condition(() => !isPaused || isCancelled);
-      }
-
-      if (isCancelled) {
-        break;
-      }
-
-      state.status = 'sending';
-      state.currentBatch = batchNumber;
-
-      log.info(`Processing batch ${batchNumber}/${state.totalBatches}`);
-
-      try {
-        // Get batch contacts
-        const batch = await activities.getCampaignBatch({
-          campaignId: input.campaignId,
-          batchNumber,
-        });
-
-        log.info('Batch retrieved', {
-          batchNumber,
-          contactCount: batch.totalInBatch,
-        });
-
-        // Send messages to all contacts in this batch
-        if (batch.totalInBatch > 0) {
-          log.info('Sending messages for batch', {
-            batchNumber,
-            totalContacts: batch.totalInBatch,
-            channelType: campaign.channelType,
-          });
-
-          // Send messages via Message Sender
-          const sendResult = await messageSendingActivities.sendCampaignBatchMessages({
-            campaignId: input.campaignId,
-            batchNumber,
-            inboxId: campaign.inboxId || '',
-            templateId: campaign.templates?.[0]?.messageTemplateId, // Use first template
-            channelType: campaign.channelType || 'Channel::Whatsapp',
-          });
-
-          log.info('Batch sending completed', {
-            batchNumber,
-            successfulSends: sendResult.successfulSends,
-            failedSends: sendResult.failedSends,
-            totalAttempts: sendResult.totalContacts,
-          });
-
-          // Update sent contacts (only count successful sends)
-          state.sentContacts += sendResult.successfulSends;
-          state.failedContacts += sendResult.failedSends;
-
-          // Update campaign progress
-          const sentPercentage =
-            state.batchesResult.totalContacts > 0
-              ? (state.sentContacts / state.batchesResult.totalContacts) * 100
-              : 0;
-
-          await activities.updateCampaignStatus({
-            campaignId: input.campaignId,
-            status: CAMPAIGN_STATUS.SENDING,
-            sentContacts: state.sentContacts,
-            sentPercentage,
-          });
-          await activities.updateExecutionProgress({
-            campaignId: input.campaignId,
-            workflowId,
-            status: 'running',
-            currentBatch: batchNumber,
-            processedContacts: state.sentContacts + state.failedContacts,
-            sentContacts: state.sentContacts,
-            failedContacts: state.failedContacts,
-          });
-
-          log.info('Batch processed successfully', {
-            batchNumber,
-            sentContacts: state.sentContacts,
-            sentPercentage: sentPercentage.toFixed(2),
-            successRate: (
-              (sendResult.successfulSends / sendResult.totalContacts) *
-              100
-            ).toFixed(2),
-          });
-        }
-
-        // Apply delay between batches (rate limiting)
-        if (
-          delayBetweenBatches > 0 &&
-          batchNumber < state.totalBatches
-        ) {
-          log.debug(`Applying delay of ${delayBetweenBatches}ms before next batch`);
-          await sleep(delayBetweenBatches);
-        }
-      } catch (error) {
-        log.error('Failed to process batch', {
-          batchNumber,
-          error: error.message,
-        });
-
-        state.failedBatches.push(batchNumber);
-
-        // Continue with next batch (don't fail entire campaign for one batch)
-        // In production, you might want to retry logic here
-      }
-    }
-
-    if (isCancelled) {
-      await activities.updateCampaignStatus({
-        campaignId: input.campaignId,
-        status: CAMPAIGN_STATUS.STOPPED,
-      });
-      await activities.updateExecutionProgress({
-        campaignId: input.campaignId,
-        workflowId,
-        status: 'cancelled',
-      });
-      state.status = 'cancelled';
-      state.completedAt = new Date().toISOString();
-      return state;
-    }
-
-    // ========== STEP 6: Complete Campaign ==========
-    log.info('✅ Campaign execution completed');
-
-    state.status = 'completed';
-    state.completedAt = new Date().toISOString();
-
-    const finalPercentage =
-      state.batchesResult.totalContacts > 0
-        ? (state.sentContacts / state.batchesResult.totalContacts) * 100
-        : 0;
-
-    await activities.updateCampaignStatus({
+    await activities.publishCampaignsPack({
       campaignId: input.campaignId,
-      status: CAMPAIGN_STATUS.COMPLETED,
-      sentContacts: state.sentContacts,
-      sentPercentage: Number(finalPercentage.toFixed(2)),
+      correlationId,
     });
+
+    // The workflow's job ends at the hand-off — the send itself runs in the
+    // distributed pipeline and the campaign-tracker (4.6) drives Campaign.status
+    // to Completed in Postgres. Close the CampaignExecution row now so it stops
+    // counting as an active execution; otherwise it stays RUNNING forever and
+    // blocks any re-run (getActiveExecution gate) and makes pause/stop signal an
+    // already-completed workflow. Run progress lives in Campaign, not here.
     await activities.updateExecutionProgress({
       campaignId: input.campaignId,
       workflowId,
       status: 'completed',
-      processedContacts: state.batchesResult.totalContacts,
-      sentContacts: state.sentContacts,
-      failedContacts: state.failedContacts,
-      currentBatch: state.totalBatches,
-      totalBatches: state.totalBatches,
     });
 
-    log.info('🎉 Campaign Execution Workflow completed successfully', {
+    log.info('✅ Campaign dispatch handed off to campaigns.pack', {
       campaignId: input.campaignId,
-      sentContacts: state.sentContacts,
-      totalBatches: state.totalBatches,
-      failedBatches: state.failedBatches.length,
-      duration: `${Date.now() - new Date(state.startedAt).getTime()}ms`,
+      correlationId,
     });
 
     return state;
   } catch (error) {
-    log.error('❌ Campaign execution failed', {
+    log.error('❌ Campaign dispatch hand-off failed', {
       campaignId: input.campaignId,
       error: error.message,
       stack: error.stack,
@@ -401,7 +188,10 @@ export async function CampaignExecutionWorkflow(
     state.completedAt = new Date().toISOString();
     state.error = error.message;
 
-    // Update campaign status to STOPPED (failed)
+    // Best-effort: flip the campaign to STOPPED and close the execution row so a
+    // failed hand-off does not leave the campaign stuck in SENDING nor the
+    // CampaignExecution stuck RUNNING (which would block re-runs). The thrown
+    // error still surfaces to Temporal for its retry/visibility.
     try {
       await activities.updateCampaignStatus({
         campaignId: input.campaignId,

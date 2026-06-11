@@ -1,5 +1,6 @@
 import { log } from '@temporalio/activity';
 import { NestFactory } from '@nestjs/core';
+import type { INestApplicationContext } from '@nestjs/common';
 import { AppModule } from '../../../app.module';
 import { AudienceComputationService } from '../../../shared/audience/audience-computation.service';
 import { CampaignsService } from '../../campaigns/services/campaigns.service';
@@ -7,6 +8,14 @@ import { Campaign } from '../../campaigns/entities/campaign.entity';
 import { CampaignExecution } from '../../campaigns/entities/campaign-execution.entity';
 import { CampaignContactStatus } from '../../campaigns/entities/campaign-contact.entity';
 import { runActivityInTenantDbContext } from '../tenant-activity-context';
+import {
+  IMESSAGE_BROKER,
+  IMessageBroker,
+} from '../../../shared/broker/interfaces/message-broker.interface';
+import {
+  CAMPAIGNS_PACK_TOPIC,
+  CampaignsPackContract,
+} from '../../../shared/broker/contracts/campaigns-pack.contract';
 
 let appContext: any = null;
 
@@ -70,6 +79,11 @@ export interface GetCampaignDataInput {
   campaignId: string;
 }
 
+export interface PublishCampaignsPackInput {
+  campaignId: string;
+  correlationId: string;
+}
+
 export interface UpdateExecutionProgressInput {
   campaignId: string;
   workflowId: string;
@@ -106,6 +120,8 @@ export interface CampaignExecutionActivities {
   updateCampaignStatus(input: UpdateCampaignStatusInput): Promise<void>;
 
   getCampaignData(input: GetCampaignDataInput): Promise<Campaign>;
+
+  publishCampaignsPack(input: PublishCampaignsPackInput): Promise<void>;
 
   updateExecutionProgress(input: UpdateExecutionProgressInput): Promise<void>;
 
@@ -420,6 +436,42 @@ export async function updateExecutionProgress(
   }
 }
 
+/**
+ * Switch-flip of the distributed campaign pipeline (story 4.7 / EVO-1221):
+ * publishes a single `campaigns.pack` message and returns once the broker
+ * acks, handing the heavy lifting (audience, pagination, dispatch, tracking)
+ * to the packer/sender/tracker workers. Replaces the legacy inline dispatch
+ * (`sendCampaignBatchMessages` → `CampaignMessageSenderService`).
+ *
+ * `triggeredBy` is fixed to `'schedule'`: the landed contract enum
+ * (`campaigns-pack.contract.ts`, story 1.5) is `schedule|manual|recurrence`
+ * and the packer only reads `campaignId`/`correlationId`, so the field is
+ * pure provenance — the Temporal trigger fires when the campaign schedule
+ * expires. A broker error propagates so Temporal applies the activity proxy's
+ * default retry policy (the broker is the fault, not the workflow).
+ */
+export async function publishCampaignsPack(
+  input: PublishCampaignsPackInput,
+): Promise<void> {
+  const { campaignId, correlationId } = input;
+
+  log.info('Publishing campaigns.pack', { campaignId, correlationId });
+
+  const app = (await getAppContext()) as INestApplicationContext;
+  const broker = app.get<IMessageBroker>(IMESSAGE_BROKER);
+
+  const payload: CampaignsPackContract = {
+    campaignId,
+    triggeredAt: new Date().toISOString(),
+    triggeredBy: 'schedule',
+    correlationId,
+  };
+
+  await broker.publish(CAMPAIGNS_PACK_TOPIC, payload);
+
+  log.info('campaigns.pack published', { campaignId, correlationId });
+}
+
 // Export activities object for worker registration
 export const campaignExecutionActivities: CampaignExecutionActivities = {
   computeCampaignAudience,
@@ -427,6 +479,7 @@ export const campaignExecutionActivities: CampaignExecutionActivities = {
   getCampaignBatch,
   updateCampaignStatus,
   getCampaignData,
+  publishCampaignsPack,
   updateExecutionProgress,
   markBatchAsProcessed,
 };
