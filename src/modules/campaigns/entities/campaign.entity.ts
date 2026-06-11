@@ -71,6 +71,17 @@ export class Campaign {
   @Column({ name: 'sent_contacts', type: 'decimal', nullable: true })
   sentContacts?: number;
 
+  // Aggregate failure counter for the distributed dispatch pipeline (story 4.6
+  // / EVO-1220). Incremented per page by the campaigns.tracked aggregator.
+  @Column({ name: 'failed_contacts', type: 'int', default: 0 })
+  failedContacts: number;
+
+  // Total pages the packer split the audience into, learned by the tracking
+  // aggregator from the page whose campaigns.tracked carries completed=true
+  // (story 4.6 / EVO-1220). Completion = distinct reported pages === totalPages.
+  @Column({ name: 'total_pages', type: 'int', nullable: true })
+  totalPages?: number;
+
   @Column({ name: 'sent_percentage', type: 'decimal', nullable: true })
   sentPercentage?: number;
 
@@ -133,7 +144,15 @@ export class Campaign {
 
   @Column({ name: 'trigger_config', type: 'jsonb', nullable: true })
   triggerConfig?: {
-    trigger_type: 'manual' | 'event' | 'segment' | 'webhook' | 'contactCreated' | 'contactUpdated' | 'label' | 'customAttribute';
+    trigger_type:
+      | 'manual'
+      | 'event'
+      | 'segment'
+      | 'webhook'
+      | 'contactCreated'
+      | 'contactUpdated'
+      | 'label'
+      | 'customAttribute';
     // Event config
     event_name?: string;
     event_properties?: Array<{
@@ -170,10 +189,15 @@ export class Campaign {
     }>;
   };
 
-  @OneToMany(() => CampaignTemplate, template => template.campaign, { cascade: true })
+  @OneToMany(() => CampaignTemplate, (template) => template.campaign, {
+    cascade: true,
+  })
   templates: CampaignTemplate[];
 
-  @OneToMany(() => CampaignContact, campaignContact => campaignContact.campaign)
+  @OneToMany(
+    () => CampaignContact,
+    (campaignContact) => campaignContact.campaign,
+  )
   campaignContacts: CampaignContact[];
 
   @CreateDateColumn({ name: 'created_at' })
