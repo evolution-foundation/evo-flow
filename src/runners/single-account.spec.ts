@@ -26,13 +26,16 @@ const RUNNER_MODES = [
   'event-process',
 ];
 
+// Substring matches on purpose: \b is camelCase-blind (`getAccountById` has
+// no word boundary before "Account"), and in a guard a loud false positive
+// beats a silent miss.
 const FORBIDDEN_PATTERNS: Array<{ keyword: string; pattern: RegExp }> = [
-  { keyword: 'accountId', pattern: /\baccountId\b/i },
-  { keyword: 'account_id', pattern: /\baccount_id\b/i },
-  { keyword: 'Account.', pattern: /\baccount\./i },
-  { keyword: 'tenant', pattern: /\btenant/i },
-  { keyword: 'accountById', pattern: /\baccountById\b/i },
-  { keyword: 'byAccount', pattern: /\bbyAccount\b/i },
+  { keyword: 'accountId', pattern: /accountId/i },
+  { keyword: 'account_id', pattern: /account_id/i },
+  { keyword: 'Account.', pattern: /account\./i },
+  { keyword: 'tenant', pattern: /tenant/i },
+  { keyword: 'accountById', pattern: /accountById/i },
+  { keyword: 'byAccount', pattern: /byAccount/i },
 ];
 
 /**
@@ -41,13 +44,27 @@ const FORBIDDEN_PATTERNS: Array<{ keyword: string; pattern: RegExp }> = [
  * through). Keep each entry justified — this list is the audit trail of every
  * sanctioned mention.
  */
-const ALLOWED_TOKENS: Array<{ pattern: RegExp; reason: string }> = [
+interface SanctionedPattern {
+  pattern: RegExp;
+  reason: string;
+}
+
+const ALLOWED_TOKENS: SanctionedPattern[] = [
   {
     // The DB seam (ADR14, story 10.1b): single-account in community, the RLS
     // extension point in enterprise. Injecting it is the sanctioned way to
-    // reach Postgres — it is not account routing.
-    pattern: /TenantDbContext|tenantDbContext/g,
+    // reach Postgres — it is not account routing. Lookarounds keep the strip
+    // to the standalone identifier: glued forms (`tenantDbContextRouter`)
+    // stay on the line and trip the scan.
+    pattern: /(?<![A-Za-z0-9_])[Tt]enantDbContext(?![A-Za-z0-9_])/g,
     reason: 'ADR14 tenant DB-context seam',
+  },
+  {
+    // The NestJS module that provides the seam — referenced by name in the
+    // runner modules' wiring docs. Sanctioned as its own full identifier so
+    // the bare-token strip can stay glue-proof.
+    pattern: /(?<![A-Za-z0-9_])[Tt]enantDbContextModule(?![A-Za-z0-9_])/g,
+    reason: 'ADR14 seam NestJS module',
   },
 ];
 
@@ -60,7 +77,7 @@ const ALLOWED_TOKENS: Array<{ pattern: RegExp; reason: string }> = [
  *   { pattern: /^logger\.log\(\{ accountId: ingestion\.accountId \}\);$/,
  *     reason: 'EVO-XXXX log-only field, no flow impact' },
  */
-const ALLOWED_LINE_PATTERNS: Array<{ pattern: RegExp; reason: string }> = [];
+const ALLOWED_LINE_PATTERNS: SanctionedPattern[] = [];
 
 interface Violation {
   file: string;
@@ -83,7 +100,7 @@ function collectSourceFiles(dir: string): string[] {
 function scanContent(
   content: string,
   fileLabel: string,
-  allowedLines: Array<{ pattern: RegExp; reason: string }> = ALLOWED_LINE_PATTERNS,
+  allowedLines: SanctionedPattern[] = ALLOWED_LINE_PATTERNS,
 ): Violation[] {
   const violations: Violation[] = [];
   content.split('\n').forEach((text, index) => {
@@ -181,6 +198,37 @@ describe('single-account invariant (FR44 / EVO-1228)', () => {
     const violations = scanContent(
       'routeByTenant(tenantId); // wrapped by TenantDbContext',
       'campaign-sender/example.ts',
+    );
+
+    expect(violations).toEqual([
+      expect.objectContaining({ line: 1, keyword: 'tenant' }),
+    ]);
+  });
+
+  it('detects routing hidden by camelCase boundaries (getAccountById)', () => {
+    const violations = scanContent(
+      'return getAccountById(contact.ownerId);',
+      'campaign-sender/example.ts',
+    );
+
+    expect(violations).toEqual([
+      expect.objectContaining({ line: 1, keyword: 'accountById' }),
+    ]);
+  });
+
+  it('keeps the seam NestJS module identifier exempt', () => {
+    const violations = scanContent(
+      'imports: [TenantDbContextModule],',
+      'campaign-packer/example.ts',
+    );
+
+    expect(violations).toEqual([]);
+  });
+
+  it('does not strip the sanctioned token glued into a larger identifier', () => {
+    const violations = scanContent(
+      'tenantDbContextRouter().route(msg);',
+      'event-process/example.ts',
     );
 
     expect(violations).toEqual([
