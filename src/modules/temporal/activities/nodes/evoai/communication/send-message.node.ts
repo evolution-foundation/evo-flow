@@ -328,7 +328,11 @@ export class SendMessageNode extends BaseNode {
         templateId = template.id;
         // The CRM re-renders server-side for channel-bound templates
         // (WhatsApp Cloud sends the real Meta template); for global templates
-        // the lookup misses and our rendered content stands.
+        // the lookup misses and our rendered content stands. Known degraded
+        // path (EVO-1267): when the lookup misses, mapped {{root.path}}
+        // values stay raw in the content — the CRM's native Liquid pass
+        // covers contact/conversation roots but renders pipeline paths empty
+        // and variable_fallbacks do not apply.
         templateParams = {
           name:
             template.name ?? String(interpolatedNodeData.templateName ?? ''),
