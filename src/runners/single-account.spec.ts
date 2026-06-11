@@ -9,10 +9,12 @@ import * as path from 'path';
  * keywords so a stray `if (account.tier === 'premium')` in a hot path fails
  * CI instead of silently reintroducing multi-tenancy.
  *
- * To clear a failure: remove the account routing, or — when the match is
- * genuinely neutral (e.g. a log-only field) — add a documented entry to
- * ALLOWED_LINE_PATTERNS below. Exceptions live HERE, as literals, so every
- * addition is visible in code review.
+ * To clear a failure: remove the account routing, or use one of the two
+ * escape hatches below — ALLOWED_LINE_PATTERNS for a genuinely neutral line
+ * (e.g. a log-only field; the pattern must match the entire line), or
+ * ALLOWED_TOKENS for a sanctioned identifier stripped before the scan.
+ * Exceptions live HERE, as literals, so every addition is visible in code
+ * review.
  */
 
 const RUNNERS_DIR = __dirname;
@@ -122,8 +124,10 @@ function assertNoViolations(violations: Violation[], scope: string): void {
     .join('\n');
   throw new Error(
     `Account routing detected in ${scope} (single-account invariant, FR44).\n` +
-      'Remove the routing/scoping, or add a justified entry to ' +
-      `ALLOWED_LINE_PATTERNS in single-account.spec.ts if the line is neutral.\n${report}`,
+      'Remove the routing/scoping. If the line is genuinely neutral (e.g. a ' +
+      'log-only field), add an anchored entry to ALLOWED_LINE_PATTERNS in ' +
+      'single-account.spec.ts; sanctioned identifiers belong in ' +
+      `ALLOWED_TOKENS.\n${report}`,
   );
 }
 
