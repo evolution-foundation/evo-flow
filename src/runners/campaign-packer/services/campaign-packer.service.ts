@@ -54,6 +54,11 @@ const CHANNEL_TYPE_TO_SEND: Record<CampaignChannelType, SendChannelType> = {
  */
 @Injectable()
 export class CampaignPackerService {
+  // EVO-1222 [4.8]: campaigns whose in-flight pagination must stop emitting
+  // further `campaigns.send` pages. Set by the `campaigns.control` consumer on
+  // pause/stop and cleared on resume; also cleared when a pagination finishes.
+  private readonly abortedCampaigns = new Set<string>();
+
   constructor(
     private readonly db: TenantDbContext,
     private readonly audience: AudienceComputationService,
@@ -68,6 +73,14 @@ export class CampaignPackerService {
 
   private get campaignContactRepository(): Repository<CampaignContact> {
     return this.db.getRepository(CampaignContact);
+  }
+
+  markPaginationAborted(campaignId: string): void {
+    this.abortedCampaigns.add(campaignId);
+  }
+
+  clearPaginationAborted(campaignId: string): void {
+    this.abortedCampaigns.delete(campaignId);
   }
 
   async pack(payload: CampaignsPackContract): Promise<PackResult> {
@@ -145,17 +158,33 @@ export class CampaignPackerService {
       contacts: contactIds.length,
     });
 
-    for (const page of pages) {
-      const message: CampaignsSendContract = {
-        campaignId: campaign.id,
-        page: page.page,
-        totalPages: page.totalPages,
-        contactIds: page.contactIds as [string, ...string[]],
-        templateId,
-        channelType,
-        correlationId,
-      };
-      await this.broker.publish(CAMPAIGNS_SEND_TOPIC, message);
+    try {
+      for (const page of pages) {
+        // Pause/stop arriving mid-pagination: stop emitting further pages. The
+        // sender's status recheck is the authoritative guard; this just avoids
+        // queueing send work that would be aborted anyway (rare — pagination is
+        // fast, but possible for very large audiences).
+        if (this.abortedCampaigns.has(campaign.id)) {
+          this.logger.warn('campaign.pagination_aborted', {
+            campaignId: campaign.id,
+            publishedPages: page.page - 1,
+            totalPages: pages.length,
+          });
+          break;
+        }
+        const message: CampaignsSendContract = {
+          campaignId: campaign.id,
+          page: page.page,
+          totalPages: page.totalPages,
+          contactIds: page.contactIds as [string, ...string[]],
+          templateId,
+          channelType,
+          correlationId,
+        };
+        await this.broker.publish(CAMPAIGNS_SEND_TOPIC, message);
+      }
+    } finally {
+      this.abortedCampaigns.delete(campaign.id);
     }
   }
 

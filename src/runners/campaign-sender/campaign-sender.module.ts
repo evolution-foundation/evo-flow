@@ -3,6 +3,7 @@ import { CampaignSenderService } from './services/campaign-sender.service';
 import { BatchDispatcherService } from './services/batch-dispatcher.service';
 import { RateLimiterService } from './services/rate-limiter.service';
 import { CampaignsSendConsumer } from './consumers/campaigns-send.consumer';
+import { CampaignsControlConsumer } from './consumers/campaigns-control.consumer';
 
 /**
  * Runner module for RUN_MODE=campaign-sender (story 4.3 / EVO-1217).
@@ -22,6 +23,7 @@ import { CampaignsSendConsumer } from './consumers/campaigns-send.consumer';
     BatchDispatcherService,
     RateLimiterService,
     CampaignsSendConsumer,
+    CampaignsControlConsumer,
   ],
 })
 export class CampaignSenderModule {}

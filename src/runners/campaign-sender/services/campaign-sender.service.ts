@@ -92,6 +92,16 @@ export class CampaignSenderService {
     return this.db.getRepository(CampaignContact);
   }
 
+  /**
+   * EVO-1222 [4.8]: drop the cached status for a campaign so the next dispatch
+   * recheck re-reads the authoritative Postgres flag immediately instead of
+   * waiting out the TTL. Invoked by the `campaigns.control` consumer on
+   * pause/stop/resume — the fast-path half of the hybrid design.
+   */
+  invalidateStatusCache(campaignId: string): void {
+    this.statusCache.delete(campaignId);
+  }
+
   async send(payload: CampaignsSendContract): Promise<SendResult> {
     const { campaignId, page, totalPages } = payload;
     const result: SendResult = {

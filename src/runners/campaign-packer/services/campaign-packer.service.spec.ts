@@ -120,6 +120,37 @@ describe('CampaignPackerService', () => {
     );
   });
 
+  it('EVO-1222 [4.8]: stops publishing pages once the campaign is flagged aborted mid-pagination', async () => {
+    findOne.mockResolvedValueOnce({
+      id: 'camp-1',
+      channelType: 'Channel::Email',
+      templates: [{ messageTemplateId: 'tmpl-1', variant: 'A' }],
+    });
+    computeAudience.mockResolvedValueOnce({
+      totalContacts: 1500,
+      validContacts: 1500,
+      invalidContacts: 0,
+      strategy: 'segment',
+    });
+    find.mockResolvedValueOnce(contactRows(1500)); // 2 pages @ batch 1000
+
+    // A pause/stop control message lands right after the first page is queued.
+    publish.mockImplementation((topic: string) => {
+      if (topic === CAMPAIGNS_SEND_TOPIC) {
+        service.markPaginationAborted('camp-1');
+      }
+      return Promise.resolve();
+    });
+
+    await service.pack(payload);
+
+    expect(sendCalls(publish)).toHaveLength(1);
+    expect(warn).toHaveBeenCalledWith(
+      'campaign.pagination_aborted',
+      expect.objectContaining({ campaignId: 'camp-1' }),
+    );
+  });
+
   it('publishes campaigns.tracked completed and warns on empty audience (AC2)', async () => {
     findOne.mockResolvedValueOnce({
       id: 'camp-1',

@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { CampaignPackerService } from './services/campaign-packer.service';
 import { PaginationService } from './services/pagination.service';
 import { CampaignsPackConsumer } from './consumers/campaigns-pack.consumer';
+import { CampaignsControlConsumer } from './consumers/campaigns-control.consumer';
 
 /**
  * Runner module for RUN_MODE=campaign-packer (story 4.1 / EVO-1215).
@@ -14,6 +15,11 @@ import { CampaignsPackConsumer } from './consumers/campaigns-pack.consumer';
  * AppModule.forRoot() when AppFactory.shouldStartCampaignPacker() is true.
  */
 @Module({
-  providers: [CampaignPackerService, PaginationService, CampaignsPackConsumer],
+  providers: [
+    CampaignPackerService,
+    PaginationService,
+    CampaignsPackConsumer,
+    CampaignsControlConsumer,
+  ],
 })
 export class CampaignPackerModule {}

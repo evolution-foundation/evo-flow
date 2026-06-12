@@ -17,6 +17,7 @@ import {
 } from '../interfaces/message-broker.interface';
 import { BrokerType } from '../types/broker-type.enum';
 import { BrokerMetrics } from '../metrics/broker-metrics';
+import { CAMPAIGNS_CONTROL_TOPIC } from '../contracts/campaigns-control.contract';
 import {
   DELIVERY_ATTEMPT_HEADER,
   DLQ_REASON_HEADER,
@@ -30,6 +31,16 @@ import {
 const CLIENT_ID = 'evo-flow-broker';
 const DEFAULT_NUM_PARTITIONS = 12;
 const DEFAULT_REPLICATION_FACTOR = 1;
+
+// EVO-1222 [4.8]: per-topic provisioning overrides. `campaigns.control` carries
+// ordered pause/resume signals per campaign, so it is single-partition (global
+// ordering) with short retention — it is a fast-path, not a history log.
+const TOPIC_CONFIG_OVERRIDES: Record<
+  string,
+  { numPartitions?: number; retentionMs?: number }
+> = {
+  [CAMPAIGNS_CONTROL_TOPIC]: { numPartitions: 1, retentionMs: 86_400_000 },
+};
 const CONNECT_RETRY_BUDGET_MS = 30_000;
 const CONNECT_RETRY_MAX_BACKOFF_MS = 15_000;
 const TOPIC_ALREADY_EXISTS_PATTERN = /already exists/i;
@@ -490,13 +501,19 @@ export class KafkaBrokerAdapter
 
   private async ensureTopicExists(topic: string): Promise<void> {
     if (this.ensuredTopics.has(topic)) return;
+    const override = TOPIC_CONFIG_OVERRIDES[topic];
     try {
       await this.admin!.createTopics({
         topics: [
           {
             topic,
-            numPartitions: DEFAULT_NUM_PARTITIONS,
+            numPartitions: override?.numPartitions ?? DEFAULT_NUM_PARTITIONS,
             replicationFactor: DEFAULT_REPLICATION_FACTOR,
+            ...(override?.retentionMs != null && {
+              configEntries: [
+                { name: 'retention.ms', value: String(override.retentionMs) },
+              ],
+            }),
           },
         ],
         waitForLeaders: true,
