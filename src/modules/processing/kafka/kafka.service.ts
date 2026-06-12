@@ -49,7 +49,7 @@ export class KafkaService implements OnModuleInit, OnModuleDestroy {
   private readonly TOPIC_RETENTION_BYTES =
     this.config.kafka?.topicConfig?.retentionBytes || '64424509440';
   private readonly TOPIC_COMPRESSION_TYPE =
-    this.config.kafka?.topicConfig?.compressionType || 'zstd';
+    this.config.kafka?.topicConfig?.compressionType || 'gzip';
   private readonly TOPIC_MAX_MESSAGE_BYTES =
     this.config.kafka?.topicConfig?.maxMessageBytes || '10485760';
 

@@ -142,8 +142,10 @@ export function getProcessingConfig(): ProcessingConfig {
         retentionMs: process.env.KAFKA_TOPIC_RETENTION_MS || '86400000',
         retentionBytes:
           process.env.KAFKA_TOPIC_RETENTION_BYTES || '64424509440',
-        compressionType:
-          process.env.KAFKA_TOPIC_COMPRESSION_TYPE || 'zstd',
+        // kafkajs (^2.2.4) only decodes gzip natively; zstd/snappy need a
+        // registered codec (zstd's is a native build that doesn't ship here),
+        // so a zstd topic crashes the kafkajs consumers on fetch (EVO-1727).
+        compressionType: process.env.KAFKA_TOPIC_COMPRESSION_TYPE || 'gzip',
         maxMessageBytes:
           process.env.KAFKA_TOPIC_MAX_MESSAGE_BYTES || '10485760',
       },
