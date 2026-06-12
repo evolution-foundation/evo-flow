@@ -1,0 +1,51 @@
+name: campaign parity suite
+
+# Story 5.4 quality gate (EVO-1225): proves the LEGACY campaign path
+# (CampaignMessageSenderService, inline orchestration) and the NEW distributed
+# pipeline (campaign-packer -> campaign-sender) produce identical dispatch
+# output — template substitution, dispatch payload and audience resolution —
+# before the legacy code is removed in story 5.5 (FR29, NFR39).
+#
+# Deterministic and fast: everything is mocked (no real HTTP, broker or DB), so
+# no service containers are needed. A divergence fails the job and names the
+# fixture + the diverging facet in the jest diff.
+#
+# NOTE on "required check": to make this a hard merge gate, mark the `parity`
+# job as a required status check in the branch protection rules for
+# main/develop.
+
+on:
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - 'src/modules/campaigns/**'
+      - 'src/runners/campaign-sender/**'
+      - 'src/runners/campaign-packer/**'
+      - 'src/shared/messaging-channels/**'
+      - 'src/shared/audience/**'
+      - '.github/workflows/campaign-parity.yml'
+  push:
+    branches: [main, develop]
+    paths:
+      - 'src/modules/campaigns/**'
+      - 'src/runners/campaign-sender/**'
+      - 'src/runners/campaign-packer/**'
+      - 'src/shared/messaging-channels/**'
+      - 'src/shared/audience/**'
+      - '.github/workflows/campaign-parity.yml'
+
+jobs:
+  parity:
+    name: legacy vs new dispatch parity (merge gate)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Run campaign parity suite
+        run: npx jest --runInBand src/modules/campaigns/parity

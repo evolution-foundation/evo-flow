@@ -1,0 +1,31 @@
+{
+  "name": "testAB",
+  "campaign": {
+    "id": "11111111-1111-4111-8111-000000000003",
+    "isRateLimit": false,
+    "type": "testAB",
+    "channelType": "Channel::Whatsapp",
+    "description": "Campaign fallback message",
+    "templates": [
+      { "messageTemplateId": "tpl-ab-a", "variant": "A" },
+      { "messageTemplateId": "tpl-ab-b", "variant": "B" }
+    ]
+  },
+  "template": {
+    "id": "tpl-ab-a",
+    "name": "promo_variant_a",
+    "content": "Oferta A para {contact.name}.",
+    "language": "pt_BR",
+    "category": "marketing",
+    "variables": [{ "key": "name" }]
+  },
+  "contactDto": {
+    "id": "ct-ab-1",
+    "name": "Bruno Lima",
+    "email": "bruno@example.com",
+    "phone_number": "+5511977776666",
+    "custom_attributes": {}
+  },
+  "inboxId": "inbox-wa-2",
+  "channelType": "whatsapp"
+}

@@ -1,0 +1,28 @@
+{
+  "name": "simple-email",
+  "campaign": {
+    "id": "11111111-1111-4111-8111-000000000002",
+    "isRateLimit": false,
+    "type": "simple",
+    "channelType": "Channel::Email",
+    "description": "Campaign fallback message",
+    "templates": [{ "messageTemplateId": "tpl-se", "variant": "A" }]
+  },
+  "template": {
+    "id": "tpl-se",
+    "name": "newsletter_email",
+    "content": "Hi {contact.name}, reach us at {contact.email}.",
+    "language": "en",
+    "category": "newsletter",
+    "variables": [{ "key": "name" }]
+  },
+  "contactDto": {
+    "id": "ct-se-1",
+    "name": "John Doe",
+    "email": "john@example.com",
+    "phone_number": "+15551234567",
+    "custom_attributes": {}
+  },
+  "inboxId": "inbox-email-1",
+  "channelType": "email"
+}

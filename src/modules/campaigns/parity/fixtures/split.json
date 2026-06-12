@@ -1,0 +1,28 @@
+{
+  "name": "split",
+  "campaign": {
+    "id": "11111111-1111-4111-8111-000000000004",
+    "isRateLimit": false,
+    "type": "split",
+    "channelType": "Channel::Sms",
+    "description": "Campaign fallback message",
+    "templates": [{ "messageTemplateId": "tpl-split", "variant": "A" }]
+  },
+  "template": {
+    "id": "tpl-split",
+    "name": "split_default",
+    "content": "{contact.name}, confirme em {contact.link}.",
+    "language": "pt_BR",
+    "category": "transactional",
+    "variables": [{ "key": "name" }, { "key": "link" }]
+  },
+  "contactDto": {
+    "id": "ct-split-1",
+    "name": "Carla Dias",
+    "email": "carla@example.com",
+    "phone_number": "+5511966665555",
+    "custom_attributes": { "link": "https://evo.test/c/9f2" }
+  },
+  "inboxId": "inbox-sms-1",
+  "channelType": "sms"
+}
