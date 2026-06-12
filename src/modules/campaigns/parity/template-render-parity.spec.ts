@@ -1,6 +1,5 @@
 import {
   capturingDispatcher,
-  runLegacy,
   runNew,
   type ParityFixture,
 } from './parity-harness';
@@ -36,44 +35,33 @@ const fixture = (
   channelType: 'whatsapp',
 });
 
-const renderedContent = async (
-  run: typeof runLegacy,
-  fx: ParityFixture,
-): Promise<string> => {
+const renderedContent = async (fx: ParityFixture): Promise<string> => {
   const cap = capturingDispatcher();
-  await run(fx, cap.dispatcher);
+  await runNew(fx, cap.dispatcher);
   return cap.calls[0].content;
 };
 
-describe('campaign template render parity (fallback content) + documented divergences', () => {
-  it('single-brace scalar variables render byte-identically', async () => {
-    const fx = fixture('Oi {contact.name}, plano {contact.plan}.', {
-      plan: 'pro',
-    });
-    const legacy = await renderedContent(runLegacy, fx);
-    const next = await renderedContent(runNew, fx);
-    expect(next).toBe('Oi Ana, plano pro.');
-    expect(next).toBe(legacy);
+// New-path render regression (post-EVO-1227). The legacy renderer was removed;
+// these pin the new `BatchDispatcherService.renderContent` behavior (the content
+// only reaches the contact on the not-resolved fallback — the CRM otherwise
+// re-renders from processed_params).
+describe('campaign template render regression: new path', () => {
+  it('renders single-brace scalar variables', async () => {
+    const content = await renderedContent(
+      fixture('Oi {contact.name}, plano {contact.plan}.', { plan: 'pro' }),
+    );
+    expect(content).toBe('Oi Ana, plano pro.');
   });
 
-  it('DOCUMENTED DIVERGENCE: legacy mangles {{double-brace}} (inner {contact.x} consumed first)', async () => {
-    // Only reaches the contact in the not-resolved fallback path; when the CRM
-    // resolves the template it re-renders from processed_params and overwrites
-    // this content. Documented so a future change to either renderer is noticed.
-    const fx = fixture('Oi {{contact.name}}!', {});
-    const legacy = await renderedContent(runLegacy, fx);
-    const next = await renderedContent(runNew, fx);
-    expect(next).toBe('Oi Ana!');
-    expect(legacy).toBe('Oi {Ana}!');
-    expect(next).not.toBe(legacy);
+  it('renders double-brace variables (before single-brace)', async () => {
+    const content = await renderedContent(fixture('Oi {{contact.name}}!', {}));
+    expect(content).toBe('Oi Ana!');
   });
 
-  it('DOCUMENTED DIVERGENCE: object custom attribute — legacy String() vs new JSON.stringify', async () => {
-    const fx = fixture('meta {contact.meta}', { meta: { a: 1 } });
-    const legacy = await renderedContent(runLegacy, fx);
-    const next = await renderedContent(runNew, fx);
-    expect(next).toBe('meta {"a":1}');
-    expect(legacy).toBe('meta [object Object]');
-    expect(next).not.toBe(legacy);
+  it('JSON-stringifies object-valued custom attributes', async () => {
+    const content = await renderedContent(
+      fixture('meta {contact.meta}', { meta: { a: 1 } }),
+    );
+    expect(content).toBe('meta {"a":1}');
   });
 });

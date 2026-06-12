@@ -16,7 +16,6 @@ import { CampaignTemplatesService } from './services/campaign-templates.service'
 import { TemplateReplicationService } from './services/template-replication.service';
 import { AudienceValidationService } from './services/audience-validation.service';
 import { CampaignWorkflowService } from './services/campaign-workflow.service';
-import { CampaignMessageSenderService } from './services/campaign-message-sender.service';
 import { CampaignExecutionsService } from './services/campaign-executions.service';
 import { ContactsModule } from '../contacts/contacts.module';
 
@@ -35,17 +34,13 @@ import { ContactsModule } from '../contacts/contacts.module';
     ConfigModule,
     ContactsModule,
   ],
-  controllers: [
-    CampaignsController,
-    CampaignTemplatesController,
-  ],
+  controllers: [CampaignsController, CampaignTemplatesController],
   providers: [
     CampaignsService,
     CampaignTemplatesService,
     TemplateReplicationService,
     AudienceValidationService,
     CampaignWorkflowService,
-    CampaignMessageSenderService,
     CampaignExecutionsService,
   ],
   exports: [
@@ -54,7 +49,6 @@ import { ContactsModule } from '../contacts/contacts.module';
     TemplateReplicationService,
     AudienceValidationService,
     CampaignWorkflowService,
-    CampaignMessageSenderService,
     CampaignExecutionsService,
   ],
 })

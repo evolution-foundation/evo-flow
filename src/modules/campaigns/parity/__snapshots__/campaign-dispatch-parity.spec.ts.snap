@@ -1,0 +1,233 @@
+// Jest Snapshot v1, https://goo.gl/fbAQLP
+
+exports[`campaign dispatch regression: new path golden master fixture: simple-email builds the expected CrmInboxDispatcher input 1`] = `
+{
+  "campaignId": "11111111-1111-4111-8111-000000000002",
+  "contactId": "ct-se-1",
+  "content": "Hi John Doe, reach us at john@example.com.",
+  "inboxId": "inbox-email-1",
+  "templateParams": {
+    "category": "newsletter",
+    "language": "en",
+    "name": "newsletter_email",
+    "processed_params": [
+      {
+        "key": "name",
+      },
+    ],
+  },
+  "transportRetries": 1,
+}
+`;
+
+exports[`campaign dispatch regression: new path golden master fixture: simple-email builds the expected HTTP request (volatile fields normalized): body 1`] = `
+{
+  "contact_id": "ct-se-1",
+  "inbox_id": "inbox-email-1",
+  "message": {
+    "content": "Hi John Doe, reach us at john@example.com.",
+    "content_attributes": {
+      "campaign_id": "11111111-1111-4111-8111-000000000002",
+    },
+    "message_type": "outgoing",
+    "private": false,
+    "template_params": {
+      "category": "newsletter",
+      "language": "en",
+      "name": "newsletter_email",
+      "processed_params": [
+        {
+          "key": "name",
+        },
+      ],
+    },
+  },
+  "source_id": "campaign_11111111-1111-4111-8111-000000000002_<ts>",
+  "status": "open",
+}
+`;
+
+exports[`campaign dispatch regression: new path golden master fixture: simple-email builds the expected HTTP request (volatile fields normalized): headers 1`] = `
+{
+  "Content-Type": "application/json",
+  "User-Agent": "EvoAI-Campaign/1.0",
+  "X-Service-Token": "tok-parity",
+}
+`;
+
+exports[`campaign dispatch regression: new path golden master fixture: simple-whatsapp builds the expected CrmInboxDispatcher input 1`] = `
+{
+  "campaignId": "11111111-1111-4111-8111-000000000001",
+  "contactId": "ct-sw-1",
+  "content": "Olá Ana Souza! Seu código é AB12.",
+  "inboxId": "inbox-wa-1",
+  "templateParams": {
+    "category": "marketing",
+    "language": "pt_BR",
+    "name": "welcome_wa",
+    "processed_params": [
+      {
+        "key": "name",
+      },
+      {
+        "key": "code",
+      },
+    ],
+  },
+  "transportRetries": 1,
+}
+`;
+
+exports[`campaign dispatch regression: new path golden master fixture: simple-whatsapp builds the expected HTTP request (volatile fields normalized): body 1`] = `
+{
+  "contact_id": "ct-sw-1",
+  "inbox_id": "inbox-wa-1",
+  "message": {
+    "content": "Olá Ana Souza! Seu código é AB12.",
+    "content_attributes": {
+      "campaign_id": "11111111-1111-4111-8111-000000000001",
+    },
+    "message_type": "outgoing",
+    "private": false,
+    "template_params": {
+      "category": "marketing",
+      "language": "pt_BR",
+      "name": "welcome_wa",
+      "processed_params": [
+        {
+          "key": "name",
+        },
+        {
+          "key": "code",
+        },
+      ],
+    },
+  },
+  "source_id": "campaign_11111111-1111-4111-8111-000000000001_<ts>",
+  "status": "open",
+}
+`;
+
+exports[`campaign dispatch regression: new path golden master fixture: simple-whatsapp builds the expected HTTP request (volatile fields normalized): headers 1`] = `
+{
+  "Content-Type": "application/json",
+  "User-Agent": "EvoAI-Campaign/1.0",
+  "X-Service-Token": "tok-parity",
+}
+`;
+
+exports[`campaign dispatch regression: new path golden master fixture: split builds the expected CrmInboxDispatcher input 1`] = `
+{
+  "campaignId": "11111111-1111-4111-8111-000000000004",
+  "contactId": "ct-split-1",
+  "content": "Carla Dias, confirme em https://evo.test/c/9f2.",
+  "inboxId": "inbox-sms-1",
+  "templateParams": {
+    "category": "transactional",
+    "language": "pt_BR",
+    "name": "split_default",
+    "processed_params": [
+      {
+        "key": "name",
+      },
+      {
+        "key": "link",
+      },
+    ],
+  },
+  "transportRetries": 1,
+}
+`;
+
+exports[`campaign dispatch regression: new path golden master fixture: split builds the expected HTTP request (volatile fields normalized): body 1`] = `
+{
+  "contact_id": "ct-split-1",
+  "inbox_id": "inbox-sms-1",
+  "message": {
+    "content": "Carla Dias, confirme em https://evo.test/c/9f2.",
+    "content_attributes": {
+      "campaign_id": "11111111-1111-4111-8111-000000000004",
+    },
+    "message_type": "outgoing",
+    "private": false,
+    "template_params": {
+      "category": "transactional",
+      "language": "pt_BR",
+      "name": "split_default",
+      "processed_params": [
+        {
+          "key": "name",
+        },
+        {
+          "key": "link",
+        },
+      ],
+    },
+  },
+  "source_id": "campaign_11111111-1111-4111-8111-000000000004_<ts>",
+  "status": "open",
+}
+`;
+
+exports[`campaign dispatch regression: new path golden master fixture: split builds the expected HTTP request (volatile fields normalized): headers 1`] = `
+{
+  "Content-Type": "application/json",
+  "User-Agent": "EvoAI-Campaign/1.0",
+  "X-Service-Token": "tok-parity",
+}
+`;
+
+exports[`campaign dispatch regression: new path golden master fixture: testAB builds the expected CrmInboxDispatcher input 1`] = `
+{
+  "campaignId": "11111111-1111-4111-8111-000000000003",
+  "contactId": "ct-ab-1",
+  "content": "Oferta A para Bruno Lima.",
+  "inboxId": "inbox-wa-2",
+  "templateParams": {
+    "category": "marketing",
+    "language": "pt_BR",
+    "name": "promo_variant_a",
+    "processed_params": [
+      {
+        "key": "name",
+      },
+    ],
+  },
+  "transportRetries": 1,
+}
+`;
+
+exports[`campaign dispatch regression: new path golden master fixture: testAB builds the expected HTTP request (volatile fields normalized): body 1`] = `
+{
+  "contact_id": "ct-ab-1",
+  "inbox_id": "inbox-wa-2",
+  "message": {
+    "content": "Oferta A para Bruno Lima.",
+    "content_attributes": {
+      "campaign_id": "11111111-1111-4111-8111-000000000003",
+    },
+    "message_type": "outgoing",
+    "private": false,
+    "template_params": {
+      "category": "marketing",
+      "language": "pt_BR",
+      "name": "promo_variant_a",
+      "processed_params": [
+        {
+          "key": "name",
+        },
+      ],
+    },
+  },
+  "source_id": "campaign_11111111-1111-4111-8111-000000000003_<ts>",
+  "status": "open",
+}
+`;
+
+exports[`campaign dispatch regression: new path golden master fixture: testAB builds the expected HTTP request (volatile fields normalized): headers 1`] = `
+{
+  "Content-Type": "application/json",
+  "User-Agent": "EvoAI-Campaign/1.0",
+  "X-Service-Token": "tok-parity",
+}
+`;

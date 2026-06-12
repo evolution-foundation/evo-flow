@@ -440,8 +440,8 @@ export async function updateExecutionProgress(
  * Switch-flip of the distributed campaign pipeline (story 4.7 / EVO-1221):
  * publishes a single `campaigns.pack` message and returns once the broker
  * acks, handing the heavy lifting (audience, pagination, dispatch, tracking)
- * to the packer/sender/tracker workers. Replaces the legacy inline dispatch
- * (`sendCampaignBatchMessages` → `CampaignMessageSenderService`).
+ * to the packer/sender/tracker workers. Replaced the former inline dispatch
+ * (the CampaignMessageSenderService batch loop, removed in story 5.5 / EVO-1227).
  *
  * `triggeredBy` is fixed to `'schedule'`: the landed contract enum
  * (`campaigns-pack.contract.ts`, story 1.5) is `schedule|manual|recurrence`

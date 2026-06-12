@@ -2,27 +2,22 @@ import { CrmInboxDispatcher } from '../../../shared/messaging-channels/dispatche
 import {
   loadFixtures,
   capturingDispatcher,
-  runLegacy,
   runNew,
   normalizeHttpBody,
 } from './parity-harness';
 
 const fixtures = loadFixtures();
 
-const omitTransportRetries = (
-  input: Record<string, unknown>,
-): Record<string, unknown> => {
-  const copy = { ...input };
-  delete copy.transportRetries;
-  return copy;
-};
-
 type FetchCall = [
   string,
   { method: string; headers: Record<string, string>; body: string },
 ];
 
-describe('campaign dispatch parity: legacy vs new', () => {
+// New-path dispatch regression (post-EVO-1227). The legacy↔new comparison
+// retired with CampaignMessageSenderService; these snapshots pin the new
+// pipeline's dispatch output per fixture, so a render/payload change fails the
+// gate (run jest -u to re-baseline an intentional change).
+describe('campaign dispatch regression: new path golden master', () => {
   it('discovers all campaign-type fixtures', () => {
     expect(fixtures.map((f) => f.name).sort()).toEqual([
       'simple-email',
@@ -35,30 +30,15 @@ describe('campaign dispatch parity: legacy vs new', () => {
   describe.each(fixtures.map((f) => [f.name, f] as const))(
     'fixture: %s',
     (_name, fixture) => {
-      it('builds an identical CrmInboxDispatcher input (modulo transportRetries)', async () => {
-        const legacy = capturingDispatcher();
-        await runLegacy(fixture, legacy.dispatcher);
+      it('builds the expected CrmInboxDispatcher input', async () => {
+        const cap = capturingDispatcher();
+        await runNew(fixture, cap.dispatcher);
 
-        const next = capturingDispatcher();
-        await runNew(fixture, next.dispatcher);
-
-        expect(legacy.calls).toHaveLength(1);
-        expect(next.calls).toHaveLength(1);
-
-        const legacyInput = omitTransportRetries(
-          legacy.calls[0] as unknown as Record<string, unknown>,
-        );
-        const newInput = omitTransportRetries(
-          next.calls[0] as unknown as Record<string, unknown>,
-        );
-
-        expect(newInput).toEqual(legacyInput);
-        // High-signal sub-assertions so a failure names the diverging facet.
-        expect(newInput.content).toBe(legacyInput.content);
-        expect(newInput.templateParams).toEqual(legacyInput.templateParams);
+        expect(cap.calls).toHaveLength(1);
+        expect(cap.calls[0]).toMatchSnapshot();
       });
 
-      it('builds an identical HTTP request (URL, headers, body — volatile fields normalized)', async () => {
+      it('builds the expected HTTP request (volatile fields normalized)', async () => {
         const fetchMock = jest.fn().mockResolvedValue({
           ok: true,
           status: 200,
@@ -77,21 +57,13 @@ describe('campaign dispatch parity: legacy vs new', () => {
         };
         const dispatcher = new CrmInboxDispatcher(config as never);
 
-        await runLegacy(fixture, dispatcher);
-        const legacyCall = fetchMock.mock.calls[0] as FetchCall;
-        const legacyUrl = legacyCall[0];
-        const legacyHeaders = legacyCall[1].headers;
-        const legacyBody = normalizeHttpBody(legacyCall[1].body);
-
-        fetchMock.mockClear();
-
         await runNew(fixture, dispatcher);
-        const newCall = fetchMock.mock.calls[0] as FetchCall;
+        const call = fetchMock.mock.calls[0] as FetchCall;
 
-        expect(newCall[0]).toBe(legacyUrl);
-        expect(newCall[1].method).toBe('POST');
-        expect(newCall[1].headers).toEqual(legacyHeaders);
-        expect(normalizeHttpBody(newCall[1].body)).toEqual(legacyBody);
+        expect(call[0]).toBe('http://crm.test/api/v1/conversations');
+        expect(call[1].method).toBe('POST');
+        expect(call[1].headers).toMatchSnapshot('headers');
+        expect(normalizeHttpBody(call[1].body)).toMatchSnapshot('body');
       });
     },
   );

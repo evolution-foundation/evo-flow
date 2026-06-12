@@ -1,14 +1,15 @@
 name: campaign parity suite
 
-# Story 5.4 quality gate (EVO-1225): proves the LEGACY campaign path
-# (CampaignMessageSenderService, inline orchestration) and the NEW distributed
-# pipeline (campaign-packer -> campaign-sender) produce identical dispatch
-# output — template substitution, dispatch payload and audience resolution —
-# before the legacy code is removed in story 5.5 (FR29, NFR39).
+# Campaign dispatch regression gate. Introduced as the 5.4 legacy-vs-new parity
+# suite (EVO-1225); story 5.5 (EVO-1227) removed the legacy
+# CampaignMessageSenderService, so the legacy half retired and this now pins the
+# NEW distributed pipeline (campaign-packer -> campaign-sender) dispatch output
+# per fixture (golden-master snapshots), so a render/payload regression is caught
+# (FR29, NFR39).
 #
 # Deterministic and fast: everything is mocked (no real HTTP, broker or DB), so
-# no service containers are needed. A divergence fails the job and names the
-# fixture + the diverging facet in the jest diff.
+# no service containers are needed. A regression fails the job with the
+# fixture-named snapshot diff.
 #
 # NOTE on "required check": to make this a hard merge gate, mark the `parity`
 # job as a required status check in the branch protection rules for

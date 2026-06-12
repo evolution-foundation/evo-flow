@@ -1,41 +1,37 @@
 import {
   loadFixtures,
-  legacySelectTemplateId,
   newSelectTemplateId,
   type ParityFixture,
 } from './parity-harness';
 
 const fixtures = loadFixtures();
 
-describe('campaign template selection parity: legacy vs new', () => {
+// New-path template selection regression (post-EVO-1227). The legacy selector
+// (`templates[0]`) was removed; these pin the new packer's variant-'A'
+// preference so a regression in `resolveTemplateId` is caught.
+describe('campaign template selection regression: new path', () => {
   describe.each(fixtures.map((f) => [f.name, f] as const))(
     'fixture: %s',
     (_name, fixture) => {
-      it('legacy templates[0] and new find(A)??[0] resolve the same template id', () => {
-        expect(newSelectTemplateId(fixture.campaign)).toBe(
-          legacySelectTemplateId(fixture.campaign),
-        );
+      it('resolves to the variant-A template id', () => {
+        const expected =
+          fixture.campaign.templates.find((t) => t.variant === 'A')
+            ?.messageTemplateId ??
+          fixture.campaign.templates[0].messageTemplateId;
+        expect(newSelectTemplateId(fixture.campaign)).toBe(expected);
       });
     },
   );
 
-  it('DOCUMENTED DIVERGENCE: variant A not first → paths pick different templates', () => {
-    // The legacy workflow used campaign.templates[0]; the new packer prefers
-    // variant 'A'. A B-first ordering makes them choose different templates —
-    // a real A/B regression risk for the 5.5 cleanup. The CRM does NOT neutralize
-    // it (a different template id renders different content).
+  it('prefers variant A even when it is not the first template', () => {
     const campaign = {
-      id: 'c-divergent',
+      id: 'c-ab',
       templates: [
         { messageTemplateId: 'tpl-b', variant: 'B' },
         { messageTemplateId: 'tpl-a', variant: 'A' },
       ],
     } as unknown as ParityFixture['campaign'];
 
-    expect(legacySelectTemplateId(campaign)).toBe('tpl-b');
     expect(newSelectTemplateId(campaign)).toBe('tpl-a');
-    expect(newSelectTemplateId(campaign)).not.toBe(
-      legacySelectTemplateId(campaign),
-    );
   });
 });

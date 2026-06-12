@@ -1,7 +1,6 @@
 import { Injectable, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
 import { Worker, NativeConnection } from '@temporalio/worker';
 import { campaignExecutionActivities } from './activities/campaign-execution.activities';
-import { campaignMessageSendingActivities } from './activities/campaign-message-sending.activities';
 import { CustomLoggerService } from 'src/common/services/custom-logger.service';
 import { AppFactory } from '../../app-factory';
 
@@ -72,10 +71,7 @@ export class CampaignWorkerService implements OnModuleInit, OnModuleDestroy {
           './workflows/campaign-execution.workflow',
         ),
         activities: {
-          // Campaign execution activities
           ...campaignExecutionActivities,
-          // Message sending activities
-          ...campaignMessageSendingActivities,
         },
         reuseV8Context: true,
         maxConcurrentActivityTaskExecutions: 100,
@@ -91,10 +87,7 @@ export class CampaignWorkerService implements OnModuleInit, OnModuleDestroy {
           'CampaignExecutionWorkflow',
           'CampaignTestExecutionWorkflow',
         ],
-        activitiesRegistered: [
-          ...Object.keys(campaignExecutionActivities),
-          ...Object.keys(campaignMessageSendingActivities),
-        ],
+        activitiesRegistered: Object.keys(campaignExecutionActivities),
       });
 
       // Reset retry counter on success

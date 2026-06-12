@@ -1,10 +1,8 @@
 import { readFileSync, readdirSync } from 'fs';
 import { join } from 'path';
-import { CampaignMessageSenderService } from '../services/campaign-message-sender.service';
 import { BatchDispatcherService } from '../../../runners/campaign-sender/services/batch-dispatcher.service';
 import { CampaignPackerService } from '../../../runners/campaign-packer/services/campaign-packer.service';
 import { mapContactDto } from '../../../shared/crm-client/types/contact';
-import { Campaign } from '../entities/campaign.entity';
 import { MessageTemplate } from '../../../shared/entities/message-template.entity';
 import type {
   ChannelDispatchInput,
@@ -13,16 +11,16 @@ import type {
 } from '../../../shared/messaging-channels/interfaces/channel-dispatcher.interface';
 
 /**
- * Parity harness (story 5.4 / EVO-1225). Drives the LEGACY single-contact path
- * (`CampaignMessageSenderService`, slated for removal in 5.5) and the NEW
- * distributed path (`BatchDispatcherService`) through the same fixture so the
- * specs can prove they produce identical dispatch output before the legacy code
- * is deleted.
+ * New-path dispatch harness. EVO-1225 introduced this as a legacy↔new PARITY
+ * suite; story 5.5 (EVO-1227) removed the legacy `CampaignMessageSenderService`,
+ * so the legacy half retired and this is now a golden-master regression of the
+ * NEW distributed path (`BatchDispatcherService`): it pins the dispatch output
+ * per fixture so a future change to the sender's render/payload is caught.
  *
- * Both paths terminate at the channel-agnostic `CrmInboxDispatcher`; the harness
- * injects a dispatcher (a capturing stub for input parity, or the real
- * dispatcher with a mocked fetch for HTTP-body parity) and runs each path with
- * mocked repositories/clients. No real HTTP, no broker, no DB.
+ * The path terminates at the channel-agnostic `CrmInboxDispatcher`; the harness
+ * injects a dispatcher (a capturing stub for input snapshots, or the real
+ * dispatcher with a mocked fetch for HTTP-body snapshots) and runs with mocked
+ * repositories/clients. No real HTTP, no broker, no DB.
  */
 
 export interface ParityFixture {
@@ -92,41 +90,6 @@ const noopLogger = {
   debug: () => {},
 };
 
-export async function runLegacy(
-  fixture: ParityFixture,
-  dispatcher: IChannelDispatcher,
-): Promise<void> {
-  const db = {
-    getRepository: (entity: unknown) => {
-      if (entity === Campaign)
-        return { findOne: () => Promise.resolve(fixture.campaign) };
-      if (entity === MessageTemplate)
-        return { findOne: () => Promise.resolve(fixture.template) };
-      return { update: () => Promise.resolve({ affected: 1 }) };
-    },
-  };
-  const configService = { get: () => undefined };
-  const contactsClient = {
-    findById: () => Promise.resolve(fixture.contactDto),
-  };
-
-  const svc = new CampaignMessageSenderService(
-    db as never,
-    configService as never,
-    contactsClient as never,
-    dispatcher as never,
-  );
-
-  await svc.sendMessage({
-    campaignId: fixture.campaign.id,
-    campaignContactId: 'cc-parity',
-    contactId: fixture.contactDto.id,
-    inboxId: fixture.inboxId,
-    templateId: fixture.template.id,
-    channelType: fixture.channelType,
-  });
-}
-
 export async function runNew(
   fixture: ParityFixture,
   dispatcher: IChannelDispatcher,
@@ -153,18 +116,11 @@ export async function runNew(
 }
 
 /**
- * Template variant selection in each path. The legacy Temporal workflow used
- * `campaign.templates[0]` (campaign-execution.workflow.ts); the new packer uses
- * `resolveTemplateId` — `find(variant === 'A') ?? templates[0]`. They agree only
- * when variant 'A' is first (or absent); the parity spec asserts agreement and
- * documents the divergence when 'A' is not the first element.
+ * Template variant selection in the new packer: `resolveTemplateId` —
+ * `find(variant === 'A') ?? templates[0]`. Pinned by the selection spec so a
+ * regression in variant resolution (e.g. dropping the variant-'A' preference)
+ * is caught.
  */
-export function legacySelectTemplateId(
-  campaign: ParityFixture['campaign'],
-): string | undefined {
-  return campaign.templates?.[0]?.messageTemplateId;
-}
-
 export function newSelectTemplateId(
   campaign: ParityFixture['campaign'],
 ): string {
