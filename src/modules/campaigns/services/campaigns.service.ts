@@ -6,6 +6,7 @@ import {
   ConflictException,
 } from '@nestjs/common';
 import { Repository, In } from 'typeorm';
+import { randomUUID } from 'crypto';
 import {
   Campaign,
   CampaignStatus,
@@ -21,14 +22,12 @@ import {
   CAMPAIGNS_CONTROL_TOPIC,
   type CampaignControlAction,
 } from '../../../shared/broker/contracts/campaigns-control.contract';
-import { CorrelationContext } from '../../../shared/correlation/correlation.context';
 
 @Injectable()
 export class CampaignsService {
   constructor(
     private readonly db: TenantDbContext,
     @Inject(IMESSAGE_BROKER) private readonly broker: IMessageBroker,
-    private readonly correlation: CorrelationContext,
   ) {}
 
   private get campaignRepository(): Repository<Campaign> {
@@ -39,7 +38,13 @@ export class CampaignsService {
    * EVO-1222 [4.8]: publish the fast-path `campaigns.control` event after an
    * authoritative status transition so packer/sender drop their cached status
    * and honor the change in <1s (the Postgres flag remains the source of
-   * truth). Reuses the request correlation id, minting one if absent.
+   * truth).
+   *
+   * correlationId is a freshly minted UUID v4 — the contract is `z.uuidv4()`
+   * and pipeline correlation ids are producer-minted (matches the
+   * `campaigns.pack` producer). Propagating the request CLS id would feed a
+   * possibly non-v4 token (`SAFE_CORRELATION_ID` is looser than v4) that both
+   * consumers would reject as a malformed payload.
    */
   private async publishControl(
     campaignId: string,
@@ -49,9 +54,7 @@ export class CampaignsService {
       await this.broker.publish(CAMPAIGNS_CONTROL_TOPIC, {
         campaignId,
         action,
-        correlationId: this.correlation.resolveIncoming(
-          this.correlation.getCorrelationId(),
-        ),
+        correlationId: randomUUID(),
       });
     } catch (err) {
       // Fast-path only: the authoritative Postgres status was already persisted,
