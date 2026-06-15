@@ -598,15 +598,38 @@ describe('KafkaBrokerAdapter', () => {
       await close();
     });
 
-    it('rejects subscribing twice to the same topic', async () => {
-      const { adapter, close } = await subscribeAndCapture({
+    it('gives a repeat subscription its own group and both consumers receive (EVO-1737)', async () => {
+      const { adapter, received, consumer, close } = await subscribeAndCapture({
         BROKER_TYPE: 'kafka',
         RUN_MODE: 'event-process',
       });
 
+      const received2: unknown[] = [];
       await expect(
-        adapter.subscribe('events-topic', () => Promise.resolve()),
-      ).rejects.toThrow(/already has a consumer registered/);
+        adapter.subscribe('events-topic', (msg) => {
+          received2.push(msg);
+          return Promise.resolve();
+        }),
+      ).resolves.toBeUndefined();
+
+      // Distinct groups → both coexist in one process (single-mode broadcast).
+      expect(lastKafka().consumerGroupIds).toEqual([
+        'event-process-events-topic',
+        'event-process-events-topic-2',
+      ]);
+
+      // Each consumer delivers to its own handler — both receive independently.
+      const consumer2 = lastKafka().consumers[1];
+      const message = {
+        topic: 'events-topic',
+        partition: 0,
+        message: { offset: '1', value: Buffer.from('{"a":1}'), headers: {} },
+      };
+      await consumer.__triggerMessage!(message);
+      await consumer2.__triggerMessage!(message);
+
+      expect(received).toHaveLength(1);
+      expect(received2).toHaveLength(1);
       await close();
     });
 

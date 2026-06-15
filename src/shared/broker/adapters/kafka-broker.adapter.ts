@@ -71,6 +71,9 @@ export class KafkaBrokerAdapter
   private producer: Producer | null = null;
   private admin: Admin | null = null;
   private readonly consumers = new Map<string, Consumer>();
+  // Per-topic subscription count. Repeat subscriptions to the same topic each
+  // get a distinct consumer group so they coexist in one process (EVO-1737).
+  private readonly topicSubscriptions = new Map<string, number>();
   private readonly pendingAcks = new WeakMap<BrokerMessage, AckHandle>();
   private readonly ensuredTopics = new Set<string>();
   private deliveryLimit = 3;
@@ -102,18 +105,19 @@ export class KafkaBrokerAdapter
   async onModuleDestroy(): Promise<void> {
     if (!this.active) return;
 
-    for (const [topic, consumer] of this.consumers.entries()) {
+    for (const [consumerKey, consumer] of this.consumers.entries()) {
       try {
         await consumer.disconnect();
       } catch (err) {
         this.writeStructured('warn', 'broker.shutdown.consumer_failed', {
           broker: BROKER_LABEL,
-          topic,
+          consumerKey,
           error: (err as Error).message,
         });
       }
     }
     this.consumers.clear();
+    this.topicSubscriptions.clear();
 
     try {
       await this.producer?.disconnect();
@@ -172,15 +176,27 @@ export class KafkaBrokerAdapter
   ): Promise<void> {
     this.assertActive('subscribe');
 
-    if (this.consumers.has(topic)) {
-      throw new Error(
-        `KafkaBrokerAdapter already has a consumer registered for topic "${topic}".`,
-      );
-    }
-
     await this.ensureTopicExists(topic);
 
-    const groupId = `${this.resolveRunMode(topic)}-${topic}`;
+    // Single mode runs every runner in one process, so a topic consumed by two
+    // runners (e.g. campaigns.control: packer + sender, EVO-1222) would otherwise
+    // collide on one consumer group. Give each repeat subscription its own group
+    // so both receive every message — the same broadcast the distributed
+    // deployment already gets from separate per-runner groups. EVO-1737.
+    // The "-N" suffix is positional (module load order), so a group name is not
+    // guaranteed stable across restarts; acceptable because repeat-subscribed
+    // topics are broadcast control topics whose Postgres flag stays authoritative.
+    const baseGroupId = `${this.resolveRunMode(topic)}-${topic}`;
+    const priorSubs = this.topicSubscriptions.get(topic) ?? 0;
+    const groupId =
+      priorSubs === 0 ? baseGroupId : `${baseGroupId}-${priorSubs + 1}`;
+
+    if (this.consumers.has(groupId)) {
+      throw new Error(
+        `KafkaBrokerAdapter already has a consumer registered for group "${groupId}".`,
+      );
+    }
+    this.topicSubscriptions.set(topic, priorSubs + 1);
     const consumer = this.kafka!.consumer({ groupId });
 
     consumer.on(consumer.events.CRASH, (event) => {
@@ -202,7 +218,7 @@ export class KafkaBrokerAdapter
         this.dispatchMessage(consumer, payload, handler),
     });
 
-    this.consumers.set(topic, consumer);
+    this.consumers.set(groupId, consumer);
     this.writeStructured('info', 'broker.subscribe', {
       broker: BROKER_LABEL,
       topic,
