@@ -85,9 +85,9 @@ describe('JourneySessionsService.startJourney', () => {
     );
   });
 
-  it('blocks when the contact already has an active session', async () => {
+  it('blocks when the contact already has an active session for the same journey', async () => {
     cache.getSessionsByContact.mockResolvedValue([
-      { status: JourneySessionStatus.ACTIVE },
+      { status: JourneySessionStatus.ACTIVE, journeyId: 'journey-1' },
     ]);
 
     const result = await service.startJourney(journey, contactId, triggerEvent);
@@ -96,6 +96,17 @@ describe('JourneySessionsService.startJourney', () => {
     expect(result.reason).toBe('contact_has_active_session');
     expect(cache.set).not.toHaveBeenCalled();
     expect(workflowStart).not.toHaveBeenCalled();
+  });
+
+  it('allows the journey when the active session belongs to a different journey (EVO-1691)', async () => {
+    cache.getSessionsByContact.mockResolvedValue([
+      { status: JourneySessionStatus.ACTIVE, journeyId: 'other-journey' },
+    ]);
+
+    const result = await service.startJourney(journey, contactId, triggerEvent);
+
+    expect(result.started).toBe(true);
+    expect(workflowStart).toHaveBeenCalledTimes(1);
   });
 
   it('bypasses the active-session guard when enforceActiveSessionGuard is false', async () => {

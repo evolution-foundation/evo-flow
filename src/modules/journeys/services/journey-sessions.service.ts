@@ -84,17 +84,21 @@ export class JourneySessionsService {
     if (enforceActiveSessionGuard) {
       const contactSessions =
         await this.sessionCacheService.getSessionsByContact(contactId);
+      // Scoped to THIS journey: a session in a different journey must not block
+      // this one. A dangling/active session therefore only blocks re-entry into
+      // the same journey, not every journey for the contact (EVO-1691).
       const hasActiveOrWaiting = contactSessions.some(
         (session) =>
-          (session.status as JourneySessionStatus) ===
+          session.journeyId === journey.id &&
+          ((session.status as JourneySessionStatus) ===
             JourneySessionStatus.ACTIVE ||
-          (session.status as JourneySessionStatus) ===
-            JourneySessionStatus.WAITING,
+            (session.status as JourneySessionStatus) ===
+              JourneySessionStatus.WAITING),
       );
 
       if (hasActiveOrWaiting) {
         this.logger.warn(
-          'Blocking journey start — contact already has an active/waiting session',
+          'Blocking journey start — contact already has an active/waiting session for this journey',
           { contactId, journeyId: journey.id },
         );
         return { started: false, reason: 'contact_has_active_session' };

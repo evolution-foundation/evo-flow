@@ -255,42 +255,11 @@ export class JourneyTriggerProcessor implements OnModuleInit, OnModuleDestroy {
       // 1. First, check if event satisfies any waiting sessions
       await this.checkWaitingSessions(event);
 
-      // 2. Check if contact has ANY active or waiting sessions (to avoid multiple parallel journeys)
-      this.logger.log(
-        `🔍 STEP 2: About to check for active or waiting sessions`,
-        {
-          contactId: event.contactId,
-          eventName: event.eventName,
-        },
-      );
-
-      const hasActiveOrWaitingSession =
-        await this.checkForActiveOrWaitingSessions(event.contactId);
-
-      this.logger.log(`🔍 STEP 2: Active or waiting session check result`, {
-        contactId: event.contactId,
-        eventName: event.eventName,
-        hasActiveOrWaitingSession,
-      });
-
-      if (hasActiveOrWaitingSession) {
-        this.logger.warn(
-          `🚫 BLOCKED: Contact ${event.contactId} has active or waiting session, skipping new journey triggers`,
-          {
-            eventName: event.eventName,
-            contactId: event.contactId,
-          },
-        );
-        return;
-      }
-
-      this.logger.log(
-        `✅ PROCEEDING: Contact ${event.contactId} has no active or waiting sessions, proceeding with journey triggers`,
-        {
-          eventName: event.eventName,
-          contactId: event.contactId,
-        },
-      );
+      // 2. The active/waiting-session guard is applied per-journey at trigger
+      // time (triggerJourneyExecution → checkForActiveOrWaitingSessions with the
+      // journey id), so a dangling/active session in one journey no longer blocks
+      // OTHER journeys for the same contact. A contact can run different journeys
+      // concurrently; it still can't re-enter the same journey while active. EVO-1691.
 
       // 3. Buscar journeys ativas para o account
       const activeJourneys = await this.journeysService.findActive();
@@ -380,16 +349,19 @@ export class JourneyTriggerProcessor implements OnModuleInit, OnModuleDestroy {
    */
   private async checkForActiveOrWaitingSessions(
     contactId: string,
+    journeyId?: string,
   ): Promise<boolean> {
     try {
       const contactSessions =
         await this.sessionCacheService.getSessionsByContact(contactId);
 
-      // Check if any session is in ACTIVE or WAITING status
+      // When journeyId is provided the guard is scoped to that journey only, so
+      // a session in a different journey does not block this one (EVO-1691).
       const hasActiveOrWaiting = contactSessions.some(
         (session) =>
-          session.status === JourneySessionStatus.ACTIVE ||
-          session.status === JourneySessionStatus.WAITING,
+          (journeyId === undefined || session.journeyId === journeyId) &&
+          (session.status === JourneySessionStatus.ACTIVE ||
+            session.status === JourneySessionStatus.WAITING),
       );
 
       this.logger.log('Checking for active or waiting sessions', {
@@ -398,8 +370,9 @@ export class JourneyTriggerProcessor implements OnModuleInit, OnModuleDestroy {
         activeOrWaitingSessions: contactSessions
           .filter(
             (s) =>
-              s.status === JourneySessionStatus.ACTIVE ||
-              s.status === JourneySessionStatus.WAITING,
+              (journeyId === undefined || s.journeyId === journeyId) &&
+              (s.status === JourneySessionStatus.ACTIVE ||
+                s.status === JourneySessionStatus.WAITING),
           )
           .map((s) => ({
             id: s.id,
@@ -672,10 +645,11 @@ export class JourneyTriggerProcessor implements OnModuleInit, OnModuleDestroy {
     );
 
     try {
-      // 🔍 CRITICAL: Double-check for existing sessions before creating new journey
-      // This prevents any scenario where this method is called without prior validation
+      // Block only if the contact already has an active/waiting session for THIS
+      // journey — different journeys can run concurrently (EVO-1691).
       const hasExistingSession = await this.checkForActiveOrWaitingSessions(
         event.contactId,
+        journey.id,
       );
       
       if (hasExistingSession) {
