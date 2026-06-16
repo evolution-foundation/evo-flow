@@ -93,7 +93,7 @@ export class RemoveLabelNode extends BaseNode {
             'RemoveLabelNode: contact not found',
             { contactId: input.contactId },
           );
-          return { labelRemoved: false, labelId: null, labelName: null } as any;
+          return { skipped: true, reason: 'contact_not_found' } as any;
         }
 
         await labelsService.removeLabel(input.contactId, labelNameOrId);
@@ -123,6 +123,9 @@ export class RemoveLabelNode extends BaseNode {
       }
     })
       .then(({ result, executionTime }) => {
+        if (result?.skipped) {
+          return this.createSkippedResult(result.reason, executionTime);
+        }
         return this.createSuccessResult(input, executionTime, {
           [`node_${input.nodeId}_label_removed`]: input.labelId,
           [`node_${input.nodeId}_label_name`]: result.labelName,

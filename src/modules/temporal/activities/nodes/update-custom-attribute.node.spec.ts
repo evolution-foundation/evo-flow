@@ -72,7 +72,7 @@ describe('UpdateCustomAttributeNode', () => {
     });
   });
 
-  it('contact 404: returns attributeUpdated=false (no-op) and warns "contact not found"', async () => {
+  it('contact 404: skips with contact_not_found instead of reporting success (EVO-1757)', async () => {
     contactsService.findById.mockResolvedValue(null);
 
     const result = await node.execute(baseInput);
@@ -82,9 +82,9 @@ describe('UpdateCustomAttributeNode', () => {
       expect.stringContaining('contact not found'),
       expect.objectContaining({ contactId: 'c3', attributeId: 'attr-id-1' }),
     );
-    expect(result.success).toBe(true);
-    // Variables block reflects the no-op result
-    expect(result.variables?.[`node_n3_new_value`]).toBe('gold');
+    expect(result.success).toBe(false);
+    expect(result.skipped).toBe(true);
+    expect(result.error).toContain('contact_not_found');
   });
 
   it('service throw: propagates as createErrorResult', async () => {

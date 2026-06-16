@@ -66,14 +66,7 @@ export class UpdateCustomAttributeNode extends BaseNode {
             'UpdateCustomAttributeNode: contact not found',
             { contactId: input.contactId, attributeId: input.nodeData.attributeId },
           );
-          return {
-            attributeUpdated: false,
-            attributeId: input.nodeData.attributeId,
-            attributeName: input.nodeData.attributeName,
-            attributeApiKey: input.nodeData.attributeName,
-            previousValue: null,
-            newValue: input.nodeData.newValue,
-          } as any;
+          return { skipped: true, reason: 'contact_not_found' } as any;
         }
 
         // Q3-contacts-service contract: updateCustomAttribute(contactId, attrKey, value).
@@ -114,6 +107,9 @@ export class UpdateCustomAttributeNode extends BaseNode {
       }
     })
       .then(({ result, executionTime }) => {
+        if (result?.skipped) {
+          return this.createSkippedResult(result.reason, executionTime);
+        }
         return this.createSuccessResult(input, executionTime, {
           [`node_${input.nodeId}_attribute_updated`]:
             input.nodeData.attributeId,

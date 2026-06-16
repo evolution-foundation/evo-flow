@@ -65,7 +65,7 @@ describe('AddLabelNode', () => {
     });
   });
 
-  it('contact 404: returns labelAdded=false (no-op) and warns "contact not found"', async () => {
+  it('contact 404: skips with contact_not_found instead of reporting success (EVO-1757)', async () => {
     contactsService.findById.mockResolvedValue(null);
 
     const result = await node.execute(baseInput);
@@ -75,10 +75,9 @@ describe('AddLabelNode', () => {
       expect.stringContaining('contact not found'),
       expect.objectContaining({ contactId: 'c1' }),
     );
-    // The node returns { labelAdded: false, labelId: null, labelName: null } as success
-    // (no throw); createSuccessResult wraps it.
-    expect(result.success).toBe(true);
-    expect(result.variables?.[`node_n1_label_name`]).toBeNull();
+    expect(result.success).toBe(false);
+    expect(result.skipped).toBe(true);
+    expect(result.error).toContain('contact_not_found');
   });
 
   it('service throw: propagates as createErrorResult', async () => {
