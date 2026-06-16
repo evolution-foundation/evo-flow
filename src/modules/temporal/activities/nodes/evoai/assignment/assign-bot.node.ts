@@ -18,13 +18,11 @@ export class AssignBotNode extends BaseNode {
   private crmService: CrmClientService;
 
   constructor() {
-    super('assign-bot', 'conversation');
+    super('assign-bot');
     this.crmService = new CrmClientService();
   }
 
   async execute(input: AssignBotNodeInput): Promise<NodeExecutionResult> {
-    const skip = this.contextSkip(input);
-    if (skip) return skip;
     return await this.executeWithTiming(input.nodeId, input, async () => {
 
       // Interpolate variables in node data
