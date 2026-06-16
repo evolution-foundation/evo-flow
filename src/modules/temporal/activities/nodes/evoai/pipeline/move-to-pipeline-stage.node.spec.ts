@@ -57,6 +57,7 @@ describe('MoveToPipelineStageNode', () => {
     expect(moveToPipelineStage).not.toHaveBeenCalled();
     expect(result.success).toBe(false);
     expect(result.skipped).toBe(true);
+    expect(result.error).toContain('no_stage_id');
   });
 
   it('skips when pipeline_id is missing', async () => {
@@ -68,6 +69,7 @@ describe('MoveToPipelineStageNode', () => {
     expect(moveToPipelineStage).not.toHaveBeenCalled();
     expect(result.success).toBe(false);
     expect(result.skipped).toBe(true);
+    expect(result.error).toContain('no_pipeline_id');
   });
 
   it('surfaces a CRM skip for a deleted target stage as skipped (AC3)', async () => {

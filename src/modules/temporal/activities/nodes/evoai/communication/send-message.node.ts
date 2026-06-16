@@ -281,6 +281,7 @@ export class SendMessageNode extends BaseNode {
             error: 'No conversationId available from trigger event',
           },
           skipped: true,
+          reason: 'no_conversation_id',
         };
       }
 

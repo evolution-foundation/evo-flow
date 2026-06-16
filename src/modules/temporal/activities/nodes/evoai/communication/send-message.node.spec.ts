@@ -88,6 +88,7 @@ describe('SendMessageNode', () => {
       expect(sendMessage).not.toHaveBeenCalled();
       expect(result.success).toBe(false);
       expect(result.skipped).toBe(true);
+      expect(result.error).toContain('no_conversation_id');
     });
   });
 
@@ -148,6 +149,7 @@ describe('SendMessageNode', () => {
       expect(sendMessage).not.toHaveBeenCalled();
       expect(result.success).toBe(false);
       expect(result.skipped).toBe(true);
+      expect(result.error).toContain('template_not_found');
     });
 
     it('skips when the templates fetch fails (CRM unavailable)', async () => {
@@ -161,6 +163,7 @@ describe('SendMessageNode', () => {
       expect(sendMessage).not.toHaveBeenCalled();
       expect(result.success).toBe(false);
       expect(result.skipped).toBe(true);
+      expect(result.error).toContain('template_not_found');
     });
 
     it('skips when template mode has no templateId configured', async () => {
@@ -173,6 +176,7 @@ describe('SendMessageNode', () => {
       expect(sendMessage).not.toHaveBeenCalled();
       expect(result.success).toBe(false);
       expect(result.skipped).toBe(true);
+      expect(result.error).toContain('no_template_id');
     });
   });
 

@@ -47,5 +47,6 @@ describe('AssignToPipelineNode', () => {
     expect(addToPipeline).not.toHaveBeenCalled();
     expect(result.success).toBe(false);
     expect(result.skipped).toBe(true);
+    expect(result.error).toContain('no_pipeline_id');
   });
 });
