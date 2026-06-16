@@ -56,7 +56,7 @@ export class SendMessageNode extends BaseNode {
   private crmService: CrmClientService | null = null;
 
   constructor() {
-    super('send-message');
+    super('send-message', 'conversation');
   }
 
   private getCrmService(): CrmClientService {

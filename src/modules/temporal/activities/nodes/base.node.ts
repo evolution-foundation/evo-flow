@@ -20,7 +20,10 @@ export interface NodeExecutionResult {
 export abstract class BaseNode {
   protected readonly logger = new CustomLoggerService(this.constructor.name);
 
-  constructor(protected readonly nodeType: string) {}
+  constructor(
+    protected readonly nodeType: string,
+    protected readonly requiredContext: 'conversation' | 'contact' | 'none' = 'none',
+  ) {}
 
   abstract execute(input: any): Promise<NodeExecutionResult>;
 
@@ -142,6 +145,20 @@ export abstract class BaseNode {
       error: `${this.nodeType} skipped: ${reason ?? 'missing_required_input'}`,
       executionTime,
     };
+  }
+
+  // Trigger↔action contract (EVO-1741): a node declaring requiredContext
+  // 'conversation' cannot run when the trigger provides no conversation (e.g.
+  // a contact-only label trigger). Returns a visible skip result (checked as a
+  // precondition before the node's work) so it fails with a clear reason
+  // instead of letting an undefined conversationId reach the CRM as a murky error.
+  protected contextSkip(input: {
+    conversationId?: string;
+  }): NodeExecutionResult | null {
+    if (this.requiredContext === 'conversation' && !input?.conversationId) {
+      return this.createSkippedResult('no_conversation_id', 0);
+    }
+    return null;
   }
 
   protected async executeWithTiming<T>(

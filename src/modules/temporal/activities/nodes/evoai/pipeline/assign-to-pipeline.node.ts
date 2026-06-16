@@ -18,7 +18,7 @@ export class AssignToPipelineNode extends BaseNode {
   private crmService: CrmClientService | null = null;
 
   constructor() {
-    super('assign-to-pipeline');
+    super('assign-to-pipeline', 'conversation');
   }
 
   private getCrmService(): CrmClientService {

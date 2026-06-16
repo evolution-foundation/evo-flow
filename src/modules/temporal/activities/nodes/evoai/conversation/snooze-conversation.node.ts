@@ -14,14 +14,17 @@ export class SnoozeConversationNode extends BaseNode {
   private crmService: CrmClientService;
 
   constructor() {
-    super('snooze-conversation');
+    super('snooze-conversation', 'conversation');
     this.crmService = new CrmClientService();
   }
 
   async execute(
     input: SnoozeConversationNodeInput,
   ): Promise<NodeExecutionResult> {
+    const skip = this.contextSkip(input);
+    if (skip) return skip;
     return await this.executeWithTiming(input.nodeId, input, async () => {
+
       // Prepare conversation context
       const context = {
         conversationId: input.conversationId,

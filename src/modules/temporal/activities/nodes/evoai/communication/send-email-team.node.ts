@@ -17,7 +17,7 @@ export class SendEmailTeamNode extends BaseNode {
   private crmService: CrmClientService | null = null;
 
   constructor() {
-    super('send-email-team');
+    super('send-email-team', 'conversation');
   }
 
   private getCrmService(): CrmClientService {

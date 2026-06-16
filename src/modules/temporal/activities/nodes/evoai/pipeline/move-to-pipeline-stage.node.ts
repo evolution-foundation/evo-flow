@@ -25,7 +25,7 @@ export class MoveToPipelineStageNode extends BaseNode {
   private crmService: CrmClientService | null = null;
 
   constructor() {
-    super('move-to-pipeline-stage');
+    super('move-to-pipeline-stage', 'conversation');
   }
 
   private getCrmService(): CrmClientService {

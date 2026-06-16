@@ -17,7 +17,7 @@ export class SendCannedResponseNode extends BaseNode {
   private crmService: CrmClientService | null = null;
 
   constructor() {
-    super('send-canned-response');
+    super('send-canned-response', 'conversation');
   }
 
   private getCrmService(): CrmClientService {

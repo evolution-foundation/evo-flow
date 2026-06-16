@@ -14,14 +14,17 @@ export class ResolveConversationNode extends BaseNode {
   private crmService: CrmClientService;
 
   constructor() {
-    super('resolve-conversation');
+    super('resolve-conversation', 'conversation');
     this.crmService = new CrmClientService();
   }
 
   async execute(
     input: ResolveConversationNodeInput,
   ): Promise<NodeExecutionResult> {
+    const skip = this.contextSkip(input);
+    if (skip) return skip;
     return await this.executeWithTiming(input.nodeId, input, async () => {
+
       // Prepare conversation context
       const context = {
         conversationId: input.conversationId,

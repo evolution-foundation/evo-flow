@@ -27,7 +27,7 @@ export class CreatePipelineTaskNode extends BaseNode {
   private crmService: CrmClientService | null = null;
 
   constructor() {
-    super('create-pipeline-task');
+    super('create-pipeline-task', 'conversation');
   }
 
   private getCrmService(): CrmClientService {
