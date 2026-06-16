@@ -74,6 +74,9 @@ export class SendEmailTeamNode extends BaseNode {
       };
     })
       .then(({ result, executionTime }) => {
+        if (result?.skipped) {
+          return this.createSkippedResult(result.reason, executionTime);
+        }
         return this.createSuccessResult(input, executionTime, {
           [`node_${input.nodeId}_team_emailed`]: result.emailed,
         });

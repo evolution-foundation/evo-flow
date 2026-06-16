@@ -55,7 +55,8 @@ describe('MoveToPipelineStageNode', () => {
     });
 
     expect(moveToPipelineStage).not.toHaveBeenCalled();
-    expect(result.success).toBe(true);
+    expect(result.success).toBe(false);
+    expect(result.skipped).toBe(true);
   });
 
   it('skips when pipeline_id is missing', async () => {
@@ -65,7 +66,8 @@ describe('MoveToPipelineStageNode', () => {
     });
 
     expect(moveToPipelineStage).not.toHaveBeenCalled();
-    expect(result.success).toBe(true);
+    expect(result.success).toBe(false);
+    expect(result.skipped).toBe(true);
   });
 
   it('surfaces a CRM skip for a deleted target stage as skipped (AC3)', async () => {
@@ -77,10 +79,9 @@ describe('MoveToPipelineStageNode', () => {
     const result = await node.execute(baseInput);
 
     expect(moveToPipelineStage).toHaveBeenCalledTimes(1);
-    expect(result.success).toBe(true);
-    expect(result.variables).toMatchObject({
-      node_n1_pipeline_moved: false,
-    });
+    expect(result.success).toBe(false);
+    expect(result.skipped).toBe(true);
+    expect(result.error).toContain('stage_not_found');
   });
 
   it('returns an error result when the CRM call fails', async () => {

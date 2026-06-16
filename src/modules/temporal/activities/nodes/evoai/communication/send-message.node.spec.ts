@@ -86,8 +86,8 @@ describe('SendMessageNode', () => {
       });
 
       expect(sendMessage).not.toHaveBeenCalled();
-      expect(result.success).toBe(true);
-      expect(result.variables).toMatchObject({ node_n1_message_sent: false });
+      expect(result.success).toBe(false);
+      expect(result.skipped).toBe(true);
     });
   });
 
@@ -146,8 +146,8 @@ describe('SendMessageNode', () => {
       const result = await node.execute(templateInput);
 
       expect(sendMessage).not.toHaveBeenCalled();
-      expect(result.success).toBe(true);
-      expect(result.variables).toMatchObject({ node_n1_message_sent: false });
+      expect(result.success).toBe(false);
+      expect(result.skipped).toBe(true);
     });
 
     it('skips when the templates fetch fails (CRM unavailable)', async () => {
@@ -159,8 +159,8 @@ describe('SendMessageNode', () => {
       const result = await node.execute(templateInput);
 
       expect(sendMessage).not.toHaveBeenCalled();
-      expect(result.success).toBe(true);
-      expect(result.variables).toMatchObject({ node_n1_message_sent: false });
+      expect(result.success).toBe(false);
+      expect(result.skipped).toBe(true);
     });
 
     it('skips when template mode has no templateId configured', async () => {
@@ -171,7 +171,8 @@ describe('SendMessageNode', () => {
 
       expect(getInboxMessageTemplates).not.toHaveBeenCalled();
       expect(sendMessage).not.toHaveBeenCalled();
-      expect(result.success).toBe(true);
+      expect(result.success).toBe(false);
+      expect(result.skipped).toBe(true);
     });
   });
 

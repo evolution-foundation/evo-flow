@@ -80,6 +80,9 @@ export class AssignToPipelineNode extends BaseNode {
       };
     })
       .then(({ result, executionTime }) => {
+        if (result?.skipped) {
+          return this.createSkippedResult(result.reason, executionTime);
+        }
         return this.createSuccessResult(input, executionTime, {
           [`node_${input.nodeId}_pipeline_assigned`]: result.assigned,
           [`node_${input.nodeId}_pipeline_id`]: result.pipelineId,

@@ -74,7 +74,8 @@ describe('CreatePipelineTaskNode', () => {
     });
 
     expect(createPipelineTask).not.toHaveBeenCalled();
-    expect(result.success).toBe(true);
+    expect(result.success).toBe(false);
+    expect(result.skipped).toBe(true);
   });
 
   it('skips when no conversationId is available', async () => {
@@ -84,7 +85,8 @@ describe('CreatePipelineTaskNode', () => {
     });
 
     expect(createPipelineTask).not.toHaveBeenCalled();
-    expect(result.success).toBe(true);
+    expect(result.success).toBe(false);
+    expect(result.skipped).toBe(true);
   });
 
   it('surfaces a CRM skip (no active pipeline_item) as skipped (AC3)', async () => {
@@ -99,8 +101,9 @@ describe('CreatePipelineTaskNode', () => {
     const result = await node.execute(baseInput);
 
     expect(createPipelineTask).toHaveBeenCalledTimes(1);
-    expect(result.success).toBe(true);
-    expect(result.variables).toMatchObject({ node_n1_task_created: false });
+    expect(result.success).toBe(false);
+    expect(result.skipped).toBe(true);
+    expect(result.error).toContain('no_pipeline_item');
   });
 
   it('returns an error result when the CRM call fails', async () => {

@@ -372,6 +372,9 @@ export class SendMessageNode extends BaseNode {
       };
     })
       .then(({ result, executionTime }) => {
+        if (result?.skipped) {
+          return this.createSkippedResult(result.reason, executionTime);
+        }
         const successResult = this.createSuccessResult(input, executionTime, {
           [`node_${input.nodeId}_message_sent`]: result.messageSent,
           [`node_${input.nodeId}_message_id`]: result.messageId,

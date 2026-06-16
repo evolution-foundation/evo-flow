@@ -14,6 +14,7 @@ export interface NodeExecutionResult {
   shouldPause?: boolean; // For wait nodes to signal workflow pause
   waitId?: string; // For wait nodes to provide wait ID
   metadata?: Record<string, any>; // For passing additional data to workflow
+  skipped?: boolean; // Node could not run (missing required input) — surfaced as a visible failure, never as success
 }
 
 export abstract class BaseNode {
@@ -123,6 +124,22 @@ export abstract class BaseNode {
     return {
       success: false,
       error: `Failed to execute ${this.nodeType}: ${error.message}`,
+      executionTime,
+    };
+  }
+
+  // A node that cannot run because a required input is missing must NOT report
+  // success (that would let the journey "complete" without acting — EVO-1740).
+  // It is surfaced as a visible failure carrying the skip reason, so the
+  // executor logs node_failed + telemetry and stops the journey.
+  protected createSkippedResult(
+    reason: string | undefined,
+    executionTime: number,
+  ): NodeExecutionResult {
+    return {
+      success: false,
+      skipped: true,
+      error: `${this.nodeType} skipped: ${reason ?? 'missing_required_input'}`,
       executionTime,
     };
   }

@@ -104,6 +104,9 @@ export class CreatePipelineTaskNode extends BaseNode {
       };
     })
       .then(({ result, executionTime }) => {
+        if (result?.skipped) {
+          return this.createSkippedResult(result.reason, executionTime);
+        }
         return this.createSuccessResult(input, executionTime, {
           [`node_${input.nodeId}_task_created`]: result.created,
           [`node_${input.nodeId}_task_id`]: result.taskId,

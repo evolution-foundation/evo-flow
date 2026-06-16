@@ -54,8 +54,8 @@ describe('SendCannedResponseNode', () => {
     const result = await node.execute(baseInput);
 
     expect(sendMessage).not.toHaveBeenCalled();
-    expect(result.success).toBe(true);
-    expect(result.variables).toMatchObject({ node_n1_message_sent: false });
+    expect(result.success).toBe(false);
+    expect(result.skipped).toBe(true);
   });
 
   it('skips when no canned_response_id is configured', async () => {
@@ -63,6 +63,7 @@ describe('SendCannedResponseNode', () => {
 
     expect(getCannedResponse).not.toHaveBeenCalled();
     expect(sendMessage).not.toHaveBeenCalled();
-    expect(result.success).toBe(true);
+    expect(result.success).toBe(false);
+    expect(result.skipped).toBe(true);
   });
 });

@@ -45,6 +45,7 @@ describe('AssignToPipelineNode', () => {
     const result = await node.execute({ ...baseInput, nodeData: {} });
 
     expect(addToPipeline).not.toHaveBeenCalled();
-    expect(result.success).toBe(true);
+    expect(result.success).toBe(false);
+    expect(result.skipped).toBe(true);
   });
 });
