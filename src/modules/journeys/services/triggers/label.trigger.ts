@@ -101,6 +101,26 @@ export class LabelTrigger extends BaseTrigger {
       return result;
     }
 
+    // EVO-1763: honor the configured action. Fire only on the event matching
+    // labelAction (applied ↔ *added, removed ↔ *removed). Triggers persisted
+    // before the action was sent default to 'applied' (the editor/canvas default).
+    const configuredAction: 'applied' | 'removed' =
+      config.labelAction || trigger.conditions?.labelAction || 'applied';
+    const eventIsApplied =
+      event.eventName === 'label_added' ||
+      event.eventName === 'contact.label.added';
+    const actionMatches =
+      configuredAction === 'applied' ? eventIsApplied : !eventIsApplied;
+
+    if (!actionMatches) {
+      const result: TriggerMatchResult = {
+        matches: false,
+        reason: `Label action mismatch: event "${event.eventName}" does not match configured action "${configuredAction}"`,
+      };
+      this.logMatch(event, journey, result);
+      return result;
+    }
+
     // Label trigger matches!
     const result: TriggerMatchResult = {
       matches: true,

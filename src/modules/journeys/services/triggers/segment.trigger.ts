@@ -90,6 +90,24 @@ export class SegmentTrigger extends BaseTrigger {
       return result;
     }
 
+    // EVO-1763: honor the configured action (entered ↔ segment_entered, exited ↔
+    // segment_exited). Triggers persisted before the frontend sent segmentAction
+    // default to 'entered' (the editor/canvas default).
+    const configuredAction: 'entered' | 'exited' =
+      config.segmentAction || trigger.conditions?.segmentAction || 'entered';
+    const eventIsEntered = event.eventName === 'segment_entered';
+    const actionMatches =
+      configuredAction === 'entered' ? eventIsEntered : !eventIsEntered;
+
+    if (!actionMatches) {
+      const result: TriggerMatchResult = {
+        matches: false,
+        reason: `Segment action mismatch: event "${event.eventName}" does not match configured action "${configuredAction}"`,
+      };
+      this.logMatch(event, journey, result);
+      return result;
+    }
+
     // Segment trigger matches!
     const result: TriggerMatchResult = {
       matches: true,
