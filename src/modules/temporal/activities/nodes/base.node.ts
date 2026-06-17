@@ -152,6 +152,14 @@ export abstract class BaseNode {
   // a contact-only label trigger). Returns a visible skip result (checked as a
   // precondition before the node's work) so it fails with a clear reason
   // instead of letting an undefined conversationId reach the CRM as a murky error.
+  //
+  // CLEANUP (EVO-1741, defer to next node work): only the 7 "enforce" nodes call
+  // contextSkip(). The 6 declare-only conversation nodes (send-message,
+  // send-canned-response, send-email-team, assign-to-pipeline, create-pipeline-task,
+  // move-to-pipeline-stage) still skip via the EVO-1740 inline guard, so their
+  // `requiredContext: 'conversation'` is inert here — do NOT remove their inline
+  // guard trusting this metadata. When next touching these nodes, unify them onto
+  // contextSkip() and drop the currently-unused 'contact' branch of requiredContext.
   protected contextSkip(input: {
     conversationId?: string;
   }): NodeExecutionResult | null {
