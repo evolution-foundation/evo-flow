@@ -8,9 +8,10 @@ import {
 } from '../shared/broker/contracts';
 
 describe('expectedBrokerTopics', () => {
-  it('campaign-packer gates only on the topic it consumes (campaigns.pack)', () => {
+  it('campaign-packer gates on both topics it consumes (pack + control)', () => {
     expect(expectedBrokerTopics(RunMode.CAMPAIGN_PACKER)).toEqual([
       CAMPAIGNS_PACK_TOPIC,
+      CAMPAIGNS_CONTROL_TOPIC,
     ]);
   });
 

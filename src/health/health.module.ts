@@ -1,12 +1,9 @@
 import { Module } from '@nestjs/common';
 import { ProcessingModule } from '../modules/processing/processing.module';
 import { getProcessingConfig } from '../modules/processing/config/processing.config';
-import { RunMode } from '../modules/processing/enums/run-mode.enum';
 import { HealthController } from './health.controller';
-import {
-  ACTIVE_INDICATORS,
-  HealthIndicator,
-} from './indicators/health-indicator.interface';
+import { ACTIVE_INDICATORS } from './indicators/health-indicator.interface';
+import { selectActiveIndicators } from './active-indicators';
 import { PostgresHealthIndicator } from './indicators/postgres.health-indicator';
 import { RedisHealthIndicator } from './indicators/redis.health-indicator';
 import { BrokerHealthIndicator } from './indicators/broker.health-indicator';
@@ -43,14 +40,13 @@ import { ClickHouseHealthIndicator } from './indicators/clickhouse.health-indica
         redis: RedisHealthIndicator,
         broker: BrokerHealthIndicator,
         clickhouse: ClickHouseHealthIndicator,
-      ) => {
-        const mode = getProcessingConfig().runMode;
-        const active: HealthIndicator[] = [postgres, redis, broker];
-        if (mode === RunMode.EVENT_PROCESS) {
-          active.push(clickhouse);
-        }
-        return active;
-      },
+      ) =>
+        selectActiveIndicators(getProcessingConfig().runMode, {
+          postgres,
+          redis,
+          broker,
+          clickhouse,
+        }),
     },
   ],
 })

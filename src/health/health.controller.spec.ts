@@ -11,9 +11,12 @@ const upIndicator = (name: string): HealthIndicator => ({
 });
 const downIndicator = (name: string): HealthIndicator => ({
   name,
-  check: jest
-    .fn()
-    .mockResolvedValue({ name, status: 'down', error: 'x' } as IndicatorResult),
+  check: jest.fn().mockResolvedValue({
+    name,
+    status: 'down',
+    error: 'boom',
+    detail: { missingTopics: ['campaigns.pack'] },
+  } as IndicatorResult),
 });
 const throwingIndicator = (name: string): HealthIndicator => ({
   name,
@@ -66,6 +69,12 @@ describe('HealthController', () => {
         status: 'down',
         failing: ['redis'],
         checks: { postgres: 'up', redis: 'down', broker: 'up' },
+        details: {
+          redis: {
+            error: 'boom',
+            detail: { missingTopics: ['campaigns.pack'] },
+          },
+        },
       });
     });
 
@@ -79,6 +88,7 @@ describe('HealthController', () => {
       expect(status).toHaveBeenCalledWith(503);
       expect(body.failing).toEqual(['broker']);
       expect(body.checks).toEqual({ postgres: 'up', broker: 'down' });
+      expect(body.details?.broker?.error).toContain('unexpected throw');
     });
   });
 });
