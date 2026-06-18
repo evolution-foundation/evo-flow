@@ -39,10 +39,7 @@ export class HealthController {
     status: 'up' | 'down';
     checks: Record<string, 'up' | 'down'>;
     failing?: string[];
-    details?: Record<
-      string,
-      { error?: string; detail?: Record<string, unknown> }
-    >;
+    details?: Record<string, Pick<IndicatorResult, 'error' | 'detail'>>;
   }> {
     // allSettled — an indicator's check() should never reject (by contract), but
     // if one does we still degrade gracefully to 'down' instead of a 500.
@@ -62,7 +59,7 @@ export class HealthController {
     const failing: string[] = [];
     const details: Record<
       string,
-      { error?: string; detail?: Record<string, unknown> }
+      Pick<IndicatorResult, 'error' | 'detail'>
     > = {};
     for (const result of settled) {
       checks[result.name] = result.status;
