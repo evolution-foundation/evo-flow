@@ -1,4 +1,5 @@
 import { BaseNode, NodeExecutionResult } from './base.node';
+import { getAppContext } from '../../../../shared/app-context.holder';
 
 export interface TransferJourneyNodeInput {
   nodeId: string;
@@ -15,30 +16,19 @@ export interface TransferJourneyNodeInput {
 
 export class TransferJourneyNode extends BaseNode {
   private journeysService: any = null;
-  private appContext: any = null;
 
   constructor() {
     super('TransferJourney');
   }
 
   private async getServices() {
-    if (!this.appContext) {
-      const { NestFactory } = await import('@nestjs/core');
-      const { AppModule } = await import('../../../../app.module');
-      
-      this.appContext = await NestFactory.createApplicationContext(
-        AppModule.forRoot(),
-        {
-          logger: false,
-        },
-      );
-    }
-    
+    const appContext = getAppContext();
+
     if (!this.journeysService) {
       const { JourneysService } = await import('../../../journeys/journeys.service');
-      this.journeysService = this.appContext.get(JourneysService);
+      this.journeysService = appContext.get(JourneysService);
     }
-    
+
     return {
       journeysService: this.journeysService
     };
@@ -56,8 +46,6 @@ export class TransferJourneyNode extends BaseNode {
         '../../workflows/journey-execution.workflow'
       );
       const { randomUUID } = await import('crypto');
-      const { NestFactory } = await import('@nestjs/core');
-      const { AppModule } = await import('../../../../app.module');
 
       // Get services using lazy initialization
       const { journeysService } = await this.getServices();

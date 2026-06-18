@@ -1,4 +1,5 @@
 import { BaseNode, NodeExecutionResult } from './base.node';
+import { getAppContext } from '../../../../shared/app-context.holder';
 
 export interface UpdateCustomAttributeNodeInput {
   nodeId: string;
@@ -16,33 +17,22 @@ export interface UpdateCustomAttributeNodeInput {
 export class UpdateCustomAttributeNode extends BaseNode {
   private customAttributesService: any = null;
   private contactsService: any = null;
-  private appContext: any = null;
 
   constructor() {
     super('UpdateCustomAttribute');
   }
 
   private async getServices() {
-    if (!this.appContext) {
-      const { NestFactory } = await import('@nestjs/core');
-      const { AppModule } = await import('../../../../app.module');
-
-      this.appContext = await NestFactory.createApplicationContext(
-        AppModule.forRoot(),
-        {
-          logger: false,
-        },
-      );
-    }
+    const appContext = getAppContext();
 
     if (!this.customAttributesService) {
       const { CustomAttributesService } = await import('../../../custom-attributes/custom-attributes.service');
-      this.customAttributesService = this.appContext.get(CustomAttributesService);
+      this.customAttributesService = appContext.get(CustomAttributesService);
     }
 
     if (!this.contactsService) {
       const { ContactsService } = await import('../../../contacts/contacts.service');
-      this.contactsService = this.appContext.get(ContactsService);
+      this.contactsService = appContext.get(ContactsService);
     }
 
     return {

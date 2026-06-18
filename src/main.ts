@@ -105,6 +105,7 @@ import { DataSource } from 'typeorm';
 import { AppModule } from './app.module';
 import { CustomLoggerService } from './common/services/custom-logger.service';
 import { StructuredLoggerService } from './shared/logger/structured-logger.service';
+import { setAppContext } from './shared/app-context.holder';
 import { loadExternalExtensions } from './evo-extension-points';
 import axios from 'axios';
 import { json, raw, urlencoded } from 'express';
@@ -146,6 +147,10 @@ async function bootstrap() {
     // handling instead of letting the default JSON parser reject it first.
     bodyParser: false,
   });
+
+  // EVO-1829: stash the primary context so Temporal action-node activities reuse
+  // it instead of bootstrapping a second AppModule (which freezes single-mode).
+  setAppContext(app);
 
   // Route framework + injected logs through the JSON structured logger so every
   // record carries correlationId/service/level/timestamp (FR38, NFR32).

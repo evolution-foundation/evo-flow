@@ -1,4 +1,3 @@
-import { NestFactory } from '@nestjs/core';
 import { publishCampaignsPack } from './campaign-execution.activities';
 import { IMESSAGE_BROKER } from '../../../shared/broker/interfaces/message-broker.interface';
 import {
@@ -7,11 +6,12 @@ import {
   isCampaignsPackContract,
 } from '../../../shared/broker/contracts/campaigns-pack.contract';
 
-jest.mock('@nestjs/core');
-// Stub the app module so booting the activity's Nest context never pulls the
-// real application graph (DB, brokers) into the unit test.
-jest.mock('../../../app.module', () => ({
-  AppModule: { forRoot: () => ({}) },
+// EVO-1829: the activity resolves services from the primary app context held in
+// app-context.holder (no second AppModule bootstrap). Mock the holder so the
+// unit test never pulls the real application graph (DB, brokers) in.
+const mockAppGet = jest.fn();
+jest.mock('../../../shared/app-context.holder', () => ({
+  getAppContext: () => ({ get: mockAppGet }),
 }));
 jest.mock('@temporalio/activity', () => ({
   log: { info: jest.fn(), error: jest.fn(), warn: jest.fn(), debug: jest.fn() },
@@ -21,17 +21,14 @@ const CORRELATION_ID = '11111111-1111-4111-8111-111111111111';
 const CAMPAIGN_ID = 'camp-1';
 
 describe('publishCampaignsPack activity', () => {
-  // Stable mock references: the activity caches its Nest context as a module
-  // singleton, so the broker resolved on the first call is reused. Reconfigure
-  // behaviour per test on the same `publish` fn rather than swapping it out.
+  // The broker is resolved via the reused mockAppGet/publish jest fns: the mock
+  // holder returns a fresh context object each call (not a singleton), while the
+  // production holder IS a genuine singleton. Reconfigure per test on `publish`.
   const publish = jest.fn();
-  const appGet = jest.fn().mockReturnValue({ publish });
 
   beforeEach(() => {
     publish.mockReset().mockResolvedValue(undefined);
-    (NestFactory.createApplicationContext as jest.Mock).mockResolvedValue({
-      get: appGet,
-    });
+    mockAppGet.mockReset().mockReturnValue({ publish });
   });
 
   it('publishes one schema-valid campaigns.pack message resolved via the broker token', async () => {
@@ -40,7 +37,7 @@ describe('publishCampaignsPack activity', () => {
       correlationId: CORRELATION_ID,
     });
 
-    expect(appGet).toHaveBeenCalledWith(IMESSAGE_BROKER);
+    expect(mockAppGet).toHaveBeenCalledWith(IMESSAGE_BROKER);
     expect(publish).toHaveBeenCalledTimes(1);
 
     const [topic, payload] = publish.mock.calls[0] as [

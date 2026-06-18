@@ -1,7 +1,6 @@
 import { log } from '@temporalio/activity';
-import { NestFactory } from '@nestjs/core';
 import type { INestApplicationContext } from '@nestjs/common';
-import { AppModule } from '../../../app.module';
+import { getAppContext as getHeldContext } from '../../../shared/app-context.holder';
 import { AudienceComputationService } from '../../../shared/audience/audience-computation.service';
 import { CampaignsService } from '../../campaigns/services/campaigns.service';
 import { Campaign } from '../../campaigns/entities/campaign.entity';
@@ -17,15 +16,10 @@ import {
   CampaignsPackContract,
 } from '../../../shared/broker/contracts/campaigns-pack.contract';
 
-let appContext: any = null;
-
+// EVO-1829: reuse the primary app context (stashed at boot) instead of
+// bootstrapping a second AppModule, which freezes single-mode.
 async function getAppContext() {
-  if (!appContext) {
-    appContext = await NestFactory.createApplicationContext(AppModule.forRoot(), {
-      logger: false,
-    });
-  }
-  return appContext;
+  return getHeldContext();
 }
 
 // ==================== Input/Output Interfaces ====================
