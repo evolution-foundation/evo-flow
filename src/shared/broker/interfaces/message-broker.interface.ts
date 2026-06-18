@@ -11,6 +11,18 @@ export interface BrokerMessage<T = unknown> {
   raw: unknown;
 }
 
+/**
+ * Result of a readiness health check against the broker (EVO-1226 [5.1]).
+ * `connected` reflects transport liveness; `missingTopics` lists any of the
+ * caller-supplied `expectedTopics` whose broker-side object is absent (Kafka
+ * topic / RabbitMQ exchange). An empty `expectedTopics` ⇒ connection-only check
+ * (`missingTopics` always `[]`).
+ */
+export interface BrokerHealth {
+  connected: boolean;
+  missingTopics: string[];
+}
+
 export interface IMessageBroker {
   publish<T>(topic: string, payload: T): Promise<void>;
   subscribe<T>(
@@ -44,6 +56,15 @@ export interface IMessageBroker {
    * never let a failed poll disturb message processing.
    */
   getTopicLag(topic: string): Promise<number>;
+  /**
+   * Readiness probe for the `/ready` endpoint (EVO-1226 [5.1]). Reports whether
+   * the transport is connected and, for each `expectedTopics` entry, whether its
+   * broker-side object exists (Kafka: topic via `admin.listTopics()`; RabbitMQ:
+   * the resolved `topic` exchange via a throwaway channel `checkExchange`).
+   * Pass `[]` for connection-only verification (dynamic/parametric topics).
+   * Must never throw — adapters return `{ connected: false, ... }` on error.
+   */
+  healthCheck(expectedTopics: string[]): Promise<BrokerHealth>;
 }
 
 export const IMESSAGE_BROKER: unique symbol = Symbol('IMessageBroker');

@@ -12,6 +12,7 @@ import {
 import { randomUUID } from 'crypto';
 import { CustomLoggerService } from 'src/common/services/custom-logger.service';
 import {
+  BrokerHealth,
   BrokerMessage,
   IMessageBroker,
 } from '../interfaces/message-broker.interface';
@@ -229,6 +230,26 @@ export class KafkaBrokerAdapter
   async provisionTopic(topic: string): Promise<void> {
     this.assertActive('provisionTopic');
     await this.ensureTopicExists(topic);
+  }
+
+  async healthCheck(expectedTopics: string[]): Promise<BrokerHealth> {
+    const connected =
+      this.active && this.producer !== null && this.admin !== null;
+    if (!connected) {
+      return { connected: false, missingTopics: expectedTopics };
+    }
+    if (expectedTopics.length === 0) {
+      return { connected: true, missingTopics: [] };
+    }
+    try {
+      const existing = await this.admin!.listTopics();
+      const missingTopics = expectedTopics.filter((t) => !existing.includes(t));
+      return { connected: true, missingTopics };
+    } catch {
+      // Metadata fetch failed — treat the transport as not ready rather than
+      // claiming the topics are missing, so the readiness payload reads cleanly.
+      return { connected: false, missingTopics: expectedTopics };
+    }
   }
 
   async getTopicLag(topic: string): Promise<number> {

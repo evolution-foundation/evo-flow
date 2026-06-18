@@ -4,6 +4,7 @@ import * as amqplib from 'amqplib';
 import { randomUUID } from 'crypto';
 import { CustomLoggerService } from 'src/common/services/custom-logger.service';
 import {
+  BrokerHealth,
   BrokerMessage,
   IMessageBroker,
 } from '../interfaces/message-broker.interface';
@@ -226,6 +227,43 @@ export class RabbitMQBrokerAdapter
     // consumer uses its own `${runMode}-${topic}` queue and binds it on
     // subscribe. Provisioning only guarantees the exchange + queue exist.
     await this.channel!.assertQueue(topic, { durable: true });
+  }
+
+  async healthCheck(expectedTopics: string[]): Promise<BrokerHealth> {
+    const connected =
+      this.active && this.connection !== null && this.channel !== null;
+    if (!connected) {
+      return { connected: false, missingTopics: expectedTopics };
+    }
+    if (expectedTopics.length === 0) {
+      return { connected: true, missingTopics: [] };
+    }
+
+    const missingTopics: string[] = [];
+    for (const topic of expectedTopics) {
+      const { exchange } = this.resolveExchange(topic);
+      // Use a throwaway channel: `checkExchange` on a missing exchange raises a
+      // channel-level error that CLOSES the channel — running it on the shared
+      // `this.channel` would tear down the live consumer. We must also attach an
+      // 'error' listener, or amqplib's emitted error event crashes the process.
+      let probeCh: AmqpChannel | null = null;
+      try {
+        probeCh = await this.connection!.createChannel();
+        probeCh.on('error', () => undefined);
+        await probeCh.checkExchange(exchange);
+      } catch {
+        missingTopics.push(topic);
+      } finally {
+        // The channel is already closed when the check failed; closing again is
+        // a no-op we swallow.
+        try {
+          await probeCh?.close();
+        } catch {
+          /* already closed by the failed check */
+        }
+      }
+    }
+    return { connected: true, missingTopics };
   }
 
   async getTopicLag(topic: string): Promise<number> {
