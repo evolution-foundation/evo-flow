@@ -8,6 +8,7 @@ import {
 export interface NodeExecutionResult {
   success: boolean;
   nextNodeId?: string;
+  nextNodeHandle?: string; // Branch routing: the edge.sourceHandle the executor should follow (conditional/split nodes)
   error?: string;
   variables?: Record<string, any>;
   executionTime?: number;

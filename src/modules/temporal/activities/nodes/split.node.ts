@@ -79,11 +79,17 @@ export class SplitNode extends BaseNode {
       };
     })
       .then(({ result, executionTime }) => {
-        return this.createSuccessResult(input, executionTime, {
-          [`node_${input.nodeId}_selected_variant`]: result.selectedVariant,
-          [`node_${input.nodeId}_variant_id`]: result.variantId,
-          [`node_${input.nodeId}_random_value`]: result.random,
-        });
+        // EVO-1828: carry the routing decision so the executor branches to the
+        // selected variant's edge (sourceHandle = split-variant-<id>) instead of
+        // always falling back to the first edge.
+        return {
+          ...this.createSuccessResult(input, executionTime, {
+            [`node_${input.nodeId}_selected_variant`]: result.selectedVariant,
+            [`node_${input.nodeId}_variant_id`]: result.variantId,
+            [`node_${input.nodeId}_random_value`]: result.random,
+          }),
+          nextNodeHandle: result.nextNodeHandle,
+        };
       })
       .catch((error) => {
         const executionTime = Date.now();
