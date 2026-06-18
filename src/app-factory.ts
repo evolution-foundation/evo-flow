@@ -4,11 +4,30 @@ import { getProcessingConfig } from './modules/processing/config/processing.conf
 export class AppFactory {
   static shouldStartHttpServer(): boolean {
     const config = getProcessingConfig();
-    // Only API, SINGLE and EVENT_RECEIVER modes need HTTP server
+    // Only API, SINGLE and EVENT_RECEIVER modes need the full HTTP API
+    // (body parser, global prefix, Swagger, validation, response transform).
     return [
       RunMode.SINGLE, // Development: everything
       RunMode.API, // Production: API gateway only
       RunMode.EVENT_RECEIVER, // Production: webhook receiver (story 3.1)
+    ].includes(config.runMode);
+  }
+
+  /**
+   * Modes that must open an HTTP listener — the full-API modes above PLUS the
+   * pipeline runner modes that expose `/health` + `/ready` probes (EVO-1226).
+   * Legacy workers (event/segment/temporal/campaign) stay listener-less.
+   */
+  static shouldServeHttp(): boolean {
+    const config = getProcessingConfig();
+    return [
+      RunMode.SINGLE,
+      RunMode.API,
+      RunMode.EVENT_RECEIVER,
+      RunMode.CAMPAIGN_PACKER,
+      RunMode.CAMPAIGN_SENDER,
+      RunMode.CAMPAIGN_TRACKER,
+      RunMode.EVENT_PROCESS,
     ].includes(config.runMode);
   }
 

@@ -81,7 +81,7 @@ if (process.env.OTEL_TRACES_ENABLED === 'true') {
   }
 }
 
-import { NestFactory } from '@nestjs/core';
+import { NestFactory, Reflector } from '@nestjs/core';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import {
   ValidationPipe,
@@ -196,6 +196,9 @@ async function bootstrap() {
       exclude: [
         'link/:shortCode',
         { path: 'webhooks/*splat', method: RequestMethod.POST },
+        // K8s/Cloud Run probes hit bare /health and /ready (EVO-1226).
+        { path: 'health', method: RequestMethod.GET },
+        { path: 'ready', method: RequestMethod.GET },
       ],
     });
 
@@ -225,8 +228,11 @@ async function bootstrap() {
       }),
     );
 
-    // Apply global response interceptor for standard format
-    app.useGlobalInterceptors(new ResponseTransformInterceptor());
+    // Apply global response interceptor for standard format. Pass Reflector so
+    // it can honor @SkipResponseTransform() (health/readiness probes — EVO-1226).
+    app.useGlobalInterceptors(
+      new ResponseTransformInterceptor(app.get(Reflector)),
+    );
 
     // Apply global exception filter for standard error format
     app.useGlobalFilters(new HttpExceptionFilter());
@@ -276,12 +282,8 @@ async function bootstrap() {
       credentials: true,
       allowedHeaders: ['Content-Type', 'Authorization'],
     });
-
-    const port = process.env.PORT ?? 3000;
-    await app.listen(port);
-
-    logger.log(`🌐 HTTP Server listening on port ${port}`);
-    logger.log(`📖 API Documentation: http://localhost:${port}/api`);
+    // NOTE: app.listen() for HTTP modes happens in the unified listener block
+    // below (shared with the pipeline worker modes that serve health probes).
   }
 
   // Workers start automatically via OnModuleInit in respective services
@@ -454,6 +456,20 @@ async function bootstrap() {
         error.message,
         error.stack,
       );
+    }
+  }
+
+  // Unified HTTP listener (EVO-1226). The full-API modes (single/api/event-receiver)
+  // and the pipeline worker modes (campaign-packer/sender/tracker, event-process)
+  // all open a port — the workers only to serve `/health` + `/ready` probes. For
+  // worker modes the app is already initialized above; app.listen() just binds the
+  // server (init is idempotent). Legacy workers return false and stay port-less.
+  if (AppFactory.shouldServeHttp()) {
+    const port = process.env.PORT ?? 3000;
+    await app.listen(port);
+    logger.log(`🌐 HTTP Server listening on port ${port}`);
+    if (AppFactory.shouldStartHttpServer()) {
+      logger.log(`📖 API Documentation: http://localhost:${port}/api`);
     }
   }
 

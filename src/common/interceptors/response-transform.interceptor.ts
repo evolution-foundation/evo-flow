@@ -4,10 +4,15 @@ import {
   ExecutionContext,
   CallHandler,
 } from '@nestjs/common';
+import { Reflector } from '@nestjs/core';
 import { Observable } from 'rxjs';
 import { map } from 'rxjs/operators';
 import { Request } from 'express';
-import { StandardSuccessResponseDto, MetaDto } from '../dto/standard-response.dto';
+import {
+  StandardSuccessResponseDto,
+  MetaDto,
+} from '../dto/standard-response.dto';
+import { SKIP_RESPONSE_TRANSFORM } from '../decorators/skip-response-transform.decorator';
 
 /**
  * Global interceptor to transform all successful responses to StandardResponse format
@@ -15,9 +20,22 @@ import { StandardSuccessResponseDto, MetaDto } from '../dto/standard-response.dt
  */
 @Injectable()
 export class ResponseTransformInterceptor implements NestInterceptor {
+  constructor(private readonly reflector?: Reflector) {}
+
   intercept(context: ExecutionContext, next: CallHandler): Observable<any> {
     const request = context.switchToHttp().getRequest<Request>();
     const response = context.switchToHttp().getResponse();
+
+    // Endpoints marked @SkipResponseTransform() (e.g. health/readiness probes)
+    // must return a raw, un-wrapped body so their contract is identical across
+    // RUN_MODEs — worker modes don't even register this interceptor (EVO-1226).
+    const skip = this.reflector?.getAllAndOverride<boolean>(
+      SKIP_RESPONSE_TRANSFORM,
+      [context.getHandler(), context.getClass()],
+    );
+    if (skip) {
+      return next.handle();
+    }
 
     return next.handle().pipe(
       map((data) => {
@@ -75,4 +93,3 @@ export class ResponseTransformInterceptor implements NestInterceptor {
     );
   }
 }
-

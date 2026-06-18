@@ -13,13 +13,8 @@ export class AppController {
       timestamp: new Date().toISOString(),
     };
   }
-
-  @Get('health')
-  @Public()
-  healthCheck() {
-    return {
-      status: 'healthy',
-      timestamp: new Date().toISOString(),
-    };
-  }
 }
+// NOTE (EVO-1226): the former `GET /health` route moved to HealthController
+// (src/health/health.controller.ts), which owns liveness `/health` and
+// readiness `/ready` across every RUN_MODE. Keeping it here would collide with
+// that controller's bare `@Get('health')` (duplicate route).

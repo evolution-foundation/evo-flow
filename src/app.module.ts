@@ -32,6 +32,7 @@ import { BearerAuthGuard } from './auth/bearer-auth.guard';
 import { CrmClientModule } from './shared/crm-client/crm-client.module';
 import { AuthClientModule } from './shared/auth-client/auth-client.module';
 import { BrokerModule } from './shared/broker/broker.module';
+import { HealthModule } from './health/health.module';
 import { IdempotencyModule } from './shared/idempotency/idempotency.module';
 import { CorrelationModule } from './shared/correlation/correlation.module';
 import { LoggerModule } from './shared/logger/logger.module';
@@ -94,6 +95,7 @@ export class AppModule {
       IdempotencyModule,
       AudienceModule,
       MessagingChannelsModule,
+      HealthModule,
     ];
 
     const conditionalImports: Array<DynamicModule | Type> = [];
