@@ -19,7 +19,9 @@ import {
 export function expectedBrokerTopics(mode: RunMode): string[] {
   switch (mode) {
     case RunMode.CAMPAIGN_PACKER:
-      return [CAMPAIGNS_PACK_TOPIC];
+      // Packer consumes both campaigns.pack and campaigns.control
+      // (CampaignsControlConsumer in campaign-packer.module.ts) — gate on both.
+      return [CAMPAIGNS_PACK_TOPIC, CAMPAIGNS_CONTROL_TOPIC];
     case RunMode.CAMPAIGN_SENDER:
       return [CAMPAIGNS_SEND_TOPIC, CAMPAIGNS_CONTROL_TOPIC];
     case RunMode.CAMPAIGN_TRACKER:

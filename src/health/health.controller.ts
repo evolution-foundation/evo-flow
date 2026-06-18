@@ -39,6 +39,10 @@ export class HealthController {
     status: 'up' | 'down';
     checks: Record<string, 'up' | 'down'>;
     failing?: string[];
+    details?: Record<
+      string,
+      { error?: string; detail?: Record<string, unknown> }
+    >;
   }> {
     // allSettled — an indicator's check() should never reject (by contract), but
     // if one does we still degrade gracefully to 'down' instead of a 500.
@@ -56,15 +60,24 @@ export class HealthController {
 
     const checks: Record<string, 'up' | 'down'> = {};
     const failing: string[] = [];
+    const details: Record<
+      string,
+      { error?: string; detail?: Record<string, unknown> }
+    > = {};
     for (const result of settled) {
       checks[result.name] = result.status;
-      if (result.status === 'down') failing.push(result.name);
+      if (result.status === 'down') {
+        failing.push(result.name);
+        // Surface the reason (and structured detail, e.g. which broker topic is
+        // missing) to speed up rollout debugging — not just the name/status.
+        details[result.name] = { error: result.error, detail: result.detail };
+      }
     }
 
     if (failing.length === 0) {
       return { status: 'up', checks };
     }
     res.status(503);
-    return { status: 'down', failing, checks };
+    return { status: 'down', failing, checks, details };
   }
 }

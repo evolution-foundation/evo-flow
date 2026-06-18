@@ -78,9 +78,17 @@ USER nestjs
 # Expose port (conditional based on RUN_MODE)
 EXPOSE 3005
 
-# Dynamic health check (only for API mode)
+# Liveness health check for every mode that serves HTTP (EVO-1226). /health is a
+# bare, un-prefixed liveness route that returns 200 whenever the process is alive
+# (dependency readiness is the separate /ready probe used by k8s/Cloud Run). Modes
+# without an HTTP server (legacy workers) report healthy unconditionally.
+# Port default aligned with main.ts (process.env.PORT ?? 3000).
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-    CMD [ "$RUN_MODE" = "api" ] && curl -f http://localhost:${PORT:-3005}/api/v1/health || exit 0
+    CMD case "$RUN_MODE" in \
+          single|api|event-receiver|campaign-packer|campaign-sender|campaign-tracker|event-process) \
+            curl -f http://localhost:${PORT:-3000}/health ;; \
+          *) exit 0 ;; \
+        esac
 
 # Use dumb-init to handle signals properly
 ENTRYPOINT ["dumb-init", "--"]

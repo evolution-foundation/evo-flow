@@ -20,9 +20,13 @@ class WrappedDemoController {
   }
 }
 
-const indicator = (name: string, status: 'up' | 'down'): HealthIndicator => ({
+const indicator = (
+  name: string,
+  status: 'up' | 'down',
+  extra: { error?: string; detail?: Record<string, unknown> } = {},
+): HealthIndicator => ({
   name,
-  check: () => Promise.resolve({ name, status }),
+  check: () => Promise.resolve({ name, status, ...extra }),
 });
 
 async function buildApp(
@@ -67,10 +71,10 @@ describe('Health endpoints (e2e)', () => {
     await app.close();
   });
 
-  it('GET /ready with redis down → 503 naming the failing indicator', async () => {
+  it('GET /ready with redis down → 503 naming the failing indicator + detail', async () => {
     const app = await buildApp([
       indicator('postgres', 'up'),
-      indicator('redis', 'down'),
+      indicator('redis', 'down', { error: 'NOAUTH' }),
       indicator('broker', 'up'),
     ]);
     const res = await request(app.getHttpServer()).get('/ready');
@@ -79,6 +83,7 @@ describe('Health endpoints (e2e)', () => {
       status: 'down',
       failing: ['redis'],
       checks: { postgres: 'up', redis: 'down', broker: 'up' },
+      details: { redis: { error: 'NOAUTH' } },
     });
     await app.close();
   });
