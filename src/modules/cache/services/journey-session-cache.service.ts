@@ -73,6 +73,49 @@ export class JourneySessionCacheService extends BaseCacheService<
     );
   }
 
+  // EVO-1756: write-through to Postgres so session history is durable and
+  // survives a Redis flush/TTL. Every write path (create, status transitions,
+  // per-node updates) funnels through set(), so overriding it here makes the
+  // whole lifecycle durable. The read path already falls back to the DB on a
+  // cache miss (BaseCacheService.get/getAll), so no read change is needed.
+  // Redis is written first (hot path); the DB write follows and its failure
+  // propagates so the Temporal activity retries / create fails loudly rather
+  // than silently dropping the record.
+  async set(entity: JourneySession): Promise<void> {
+    await super.set(entity);
+    await this.persistToDatabase(entity);
+  }
+
+  private async persistToDatabase(value: JourneySession): Promise<void> {
+    const v = value as unknown as CachedJourneySession;
+    try {
+      await this.repository.save({
+        id: v.id,
+        journeyId: v.journeyId,
+        contactId: v.contactId,
+        status: v.status as JourneySession['status'],
+        currentNodeId: v.currentNodeId,
+        waitingFor: v.waitingFor,
+        variables: v.variables ?? {},
+        workflowId: v.workflowId,
+        workflowRunId: v.workflowRunId,
+        startedAt: v.startedAt,
+        completedAt: v.completedAt,
+        failedAt: v.failedAt,
+        errorMessage: v.errorMessage,
+        context: v.context,
+        retryCount: v.retryCount ?? 0,
+        maxRetries: v.maxRetries ?? 3,
+        executionLogs: v.executionLogs ?? [],
+      });
+    } catch (error) {
+      this.logger.error(
+        `Failed to persist journey session ${v.id} to Postgres: ${error.message}`,
+      );
+      throw error;
+    }
+  }
+
   async getActiveSessionsByJourney(
     journeyId: string,
   ): Promise<CachedJourneySession[]> {
@@ -90,7 +133,9 @@ export class JourneySessionCacheService extends BaseCacheService<
       const allSessions = await this.getAll();
       return allSessions.filter((session) => session.contactId === contactId);
     } catch (error) {
-      this.logger.error(`Failed to get sessions by contact ${contactId}: ${error.message}`);
+      this.logger.error(
+        `Failed to get sessions by contact ${contactId}: ${error.message}`,
+      );
       throw error;
     }
   }
@@ -177,13 +222,17 @@ export class JourneySessionCacheService extends BaseCacheService<
     });
   }
 
-  protected async getMultipleFromDatabase(ids: string[]): Promise<JourneySession[]> {
+  protected async getMultipleFromDatabase(
+    ids: string[],
+  ): Promise<JourneySession[]> {
     return this.repository.find({
       where: { id: In(ids) },
     });
   }
 
-  protected async getAllFromDatabase(limit?: number): Promise<JourneySession[]> {
+  protected async getAllFromDatabase(
+    limit?: number,
+  ): Promise<JourneySession[]> {
     const query = this.repository
       .createQueryBuilder('session')
       .orderBy('session.updatedAt', 'DESC');
@@ -200,10 +249,7 @@ export class JourneySessionCacheService extends BaseCacheService<
     return `evo-campaign:journey-session:waiting:${contactId}`;
   }
 
-  async addToWaitingIndex(
-    sessionId: string,
-    contactId: string,
-  ): Promise<void> {
+  async addToWaitingIndex(sessionId: string, contactId: string): Promise<void> {
     if (!this.redis || this.redis.status !== 'ready') {
       await this.redis.connect();
     }

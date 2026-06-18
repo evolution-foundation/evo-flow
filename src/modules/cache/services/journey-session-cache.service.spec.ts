@@ -81,13 +81,14 @@ jest.mock('./redis-singleton.service', () => ({
 import { JourneySessionCacheService } from './journey-session-cache.service';
 
 function makeRepository(): jest.Mocked<
-  Pick<Repository<JourneySession>, 'findOne' | 'find'>
+  Pick<Repository<JourneySession>, 'findOne' | 'find' | 'save'>
 > {
   return {
     findOne: jest.fn().mockResolvedValue(null),
     find: jest.fn().mockResolvedValue([]),
+    save: jest.fn().mockImplementation((e) => Promise.resolve(e)),
   } as unknown as jest.Mocked<
-    Pick<Repository<JourneySession>, 'findOne' | 'find'>
+    Pick<Repository<JourneySession>, 'findOne' | 'find' | 'save'>
   >;
 }
 
@@ -161,5 +162,65 @@ describe('JourneySessionCacheService — shared-layer guarantees (EVO-1645)', ()
       where: { id: In(['sess-a', 'sess-b']) },
     });
     expect(seen.map((s) => s.id).sort()).toEqual(['sess-a', 'sess-b']);
+  });
+});
+
+describe('JourneySessionCacheService — Postgres write-through durability (EVO-1756)', () => {
+  beforeEach(() => {
+    mockKv.clear();
+    mockSets.clear();
+    jest.clearAllMocks();
+  });
+
+  it('persists the session to Postgres on set(), not just Redis', async () => {
+    const repo = makeRepository();
+    const service = makeService(repo);
+
+    await service.set(makeSession('sess-1'));
+
+    expect(repo.save).toHaveBeenCalledTimes(1);
+    expect(repo.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: 'sess-1',
+        journeyId: 'journey-1',
+        contactId: 'contact-1',
+        status: 'active',
+        variables: { foo: 'bar' },
+      }),
+    );
+    // Still written to the shared Redis layer too.
+    expect(mockKv.has('evo-campaign:journey-session:sess-1')).toBe(true);
+  });
+
+  it('durably persists a terminal (failed) status transition', async () => {
+    const repo = makeRepository();
+    const service = makeService(repo);
+
+    await service.set(makeSession('sess-2'));
+    repo.save.mockClear();
+
+    const failedAt = new Date('2026-06-02T00:00:00Z');
+    await service.updateSessionStatus('sess-2', 'failed', {
+      failedAt,
+      errorMessage: 'boom',
+    });
+
+    expect(repo.save).toHaveBeenCalledTimes(1);
+    expect(repo.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: 'sess-2',
+        status: 'failed',
+        failedAt,
+        errorMessage: 'boom',
+      }),
+    );
+  });
+
+  it('propagates a Postgres write failure (durability is not best-effort)', async () => {
+    const repo = makeRepository();
+    repo.save.mockRejectedValueOnce(new Error('db down'));
+    const service = makeService(repo);
+
+    await expect(service.set(makeSession('sess-3'))).rejects.toThrow('db down');
   });
 });
