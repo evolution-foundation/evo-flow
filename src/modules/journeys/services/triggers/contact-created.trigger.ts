@@ -23,12 +23,16 @@ export class ContactCreatedTrigger extends BaseTrigger {
       triggerConditions: trigger.conditions,
     });
 
-    const isContactCreated = event.eventName === 'contact_created';
+    // The CRM emits `contact.created` (dotted, canonical); older producers used
+    // the short `contact_created`. Accept both (EVO-1826), like LabelTrigger.
+    const isContactCreated =
+      event.eventName === 'contact.created' ||
+      event.eventName === 'contact_created';
 
     if (!isContactCreated) {
       const result: TriggerMatchResult = {
         matches: false,
-        reason: `Event is not contact_created: ${event.eventName}`,
+        reason: `Event is not a contact-created event: ${event.eventName}`,
       };
       this.logMatch(event, journey, result);
       return result;
@@ -36,10 +40,20 @@ export class ContactCreatedTrigger extends BaseTrigger {
 
     // Check contact field filters if specified
     const config = this.getTriggerConfig(trigger);
-    const contactFields = config.contactFields || trigger.contactFields || trigger.metadata?.contactFields;
+    const contactFields =
+      config.contactFields ||
+      trigger.contactFields ||
+      trigger.metadata?.contactFields;
 
-    if (contactFields && Array.isArray(contactFields) && contactFields.length > 0) {
-      const contactFieldsMatch = this.matchesContactFields(event, contactFields);
+    if (
+      contactFields &&
+      Array.isArray(contactFields) &&
+      contactFields.length > 0
+    ) {
+      const contactFieldsMatch = this.matchesContactFields(
+        event,
+        contactFields,
+      );
       const result: TriggerMatchResult = {
         matches: contactFieldsMatch.matches,
         reason: contactFieldsMatch.reason,
@@ -54,7 +68,7 @@ export class ContactCreatedTrigger extends BaseTrigger {
 
     const result: TriggerMatchResult = {
       matches: true,
-      reason: `Event matches contact_created: ${event.eventName}`,
+      reason: `Event matches contact-created: ${event.eventName}`,
       metadata: {
         eventName: event.eventName,
       },
@@ -86,7 +100,10 @@ export class ContactCreatedTrigger extends BaseTrigger {
 
     // Check all required fields
     for (const requiredField of requiredFields) {
-      const fieldResult = this.matchesContactField(contactTraits, requiredField);
+      const fieldResult = this.matchesContactField(
+        contactTraits,
+        requiredField,
+      );
       if (!fieldResult.matches) {
         return {
           matches: false,
@@ -109,7 +126,10 @@ export class ContactCreatedTrigger extends BaseTrigger {
     contactTraits: Record<string, any>,
     requiredField: any,
   ): TriggerMatchResult {
-    const actualValue = this.getNestedProperty(contactTraits, requiredField.field);
+    const actualValue = this.getNestedProperty(
+      contactTraits,
+      requiredField.field,
+    );
     const expectedValue = requiredField.value;
     const operator = requiredField.operator;
 

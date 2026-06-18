@@ -23,12 +23,16 @@ export class ContactUpdatedTrigger extends BaseTrigger {
       triggerConditions: trigger.conditions,
     });
 
-    const isContactUpdated = event.eventName === 'contact_updated';
+    // The CRM emits `contact.updated` (dotted, canonical); older producers used
+    // the short `contact_updated`. Accept both (EVO-1826), like LabelTrigger.
+    const isContactUpdated =
+      event.eventName === 'contact.updated' ||
+      event.eventName === 'contact_updated';
 
     if (!isContactUpdated) {
       const result: TriggerMatchResult = {
         matches: false,
-        reason: `Event is not contact_updated: ${event.eventName}`,
+        reason: `Event is not a contact-updated event: ${event.eventName}`,
       };
       this.logMatch(event, journey, result);
       return result;
@@ -64,7 +68,7 @@ export class ContactUpdatedTrigger extends BaseTrigger {
 
     const result: TriggerMatchResult = {
       matches: true,
-      reason: `Event matches contact_updated: ${event.eventName}`,
+      reason: `Event matches contact-updated: ${event.eventName}`,
       metadata: {
         eventName: event.eventName,
       },
