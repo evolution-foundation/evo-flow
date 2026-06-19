@@ -66,6 +66,7 @@ export class JourneysService {
           isActive: cached.isActive,
           flowData: cached.flowData,
           flowTriggers: cached.flowTriggers,
+          variables: cached.variables,
           createdAt: cached.createdAt instanceof Date ? cached.createdAt : new Date(cached.createdAt),
           updatedAt: cached.updatedAt instanceof Date ? cached.updatedAt : new Date(cached.updatedAt),
         } as Journey));
@@ -93,6 +94,7 @@ export class JourneysService {
         isActive: cachedJourney.isActive,
         flowData: cachedJourney.flowData,
         flowTriggers: cachedJourney.flowTriggers,
+        variables: cachedJourney.variables,
         createdAt: cachedJourney.createdAt instanceof Date ? cachedJourney.createdAt : new Date(cachedJourney.createdAt),
         updatedAt: cachedJourney.updatedAt instanceof Date ? cachedJourney.updatedAt : new Date(cachedJourney.updatedAt),
       } as Journey;
@@ -184,6 +186,7 @@ export class JourneysService {
       isActive: cached.isActive,
       flowData: cached.flowData,
       flowTriggers: cached.flowTriggers,
+      variables: cached.variables,
       createdAt: cached.createdAt instanceof Date ? cached.createdAt : new Date(cached.createdAt),
       updatedAt: cached.updatedAt instanceof Date ? cached.updatedAt : new Date(cached.updatedAt),
     } as Journey));
@@ -413,9 +416,11 @@ export class JourneysService {
 
       journey.variables = variables;
 
-      await this.journeyRepository.save(journey);
+      const updatedJourney = await this.journeyRepository.save(journey);
 
-      return journey.variables || [];
+      await this.journeyCacheService.set(updatedJourney);
+
+      return updatedJourney.variables || [];
     } catch (error) {
       this.logger.error(
         `Error updating variables for journey ${id}: ${error.message}`,

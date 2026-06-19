@@ -78,3 +78,37 @@ describe('JourneysService.processSpecificJourneyWebhookTrigger', () => {
     expect(startJourney).not.toHaveBeenCalled();
   });
 });
+
+describe('JourneysService.getJourneyVariables — EVO-1836 cache-hit preserves variables', () => {
+  it('returns the cached journey variables (findOne must not drop variables on cache hit)', async () => {
+    const vars = [
+      { id: 'v1', name: 'lead_score', type: 'number', defaultValue: '0' },
+    ];
+    const journeyCacheService = {
+      get: jest.fn().mockResolvedValue({
+        id: 'journey-1',
+        name: 'J1',
+        description: '',
+        isActive: true,
+        flowData: {},
+        flowTriggers: [],
+        variables: vars,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      }),
+    };
+    const service = new JourneysService(
+      {} as any,
+      journeyCacheService as any,
+      {} as any,
+    );
+    jest
+      .spyOn((service as any).logger, 'error')
+      .mockImplementation(() => undefined);
+
+    const result = await service.getJourneyVariables('journey-1');
+
+    expect(journeyCacheService.get).toHaveBeenCalledWith('journey-1');
+    expect(result).toEqual(vars);
+  });
+});
