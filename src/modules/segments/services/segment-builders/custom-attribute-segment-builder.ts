@@ -8,6 +8,16 @@ import { ContactExclusionQueries } from '../../queries/contact-exclusion-queries
 
 @Injectable()
 export class CustomAttributeSegmentBuilder extends BaseSegmentBuilder {
+  // The custom-attribute change is an identify-DTO event. The CRM stores the
+  // canonical dotted name (older producers used the short underscore form) and
+  // the payload in the `traits` column as { attributeName, attributeValue,
+  // changeType } — one row per change (EVO-1839). Earlier this builder filtered
+  // `event_name = 'identify'` and read `traits['<attrName>']` (a never-emitted
+  // named-key shape); both were wrong. Accept both event-name forms and read the
+  // canonical fields below.
+  private static readonly EVENT_FILTER =
+    "ce.event_name IN ('contact.custom_attribute.changed', 'custom_attribute_changed')";
+
   async buildQuery(node: SegmentNode): Promise<SegmentQueryResult> {
     this.validateNode(node, ['type', 'operator', 'value']);
 
@@ -20,145 +30,73 @@ export class CustomAttributeSegmentBuilder extends BaseSegmentBuilder {
 
     switch (operator) {
       case 'equals':
-        return this.buildEqualsQuery(attributeName, value);
+        return this.buildComparisonQuery(
+          attributeName,
+          `= '${value}'`,
+          'Equals',
+        );
       case 'not_equals':
-        return this.buildNotEqualsQuery(attributeName, value);
+        // include contacts whose latest value differs OR who cleared the attribute
+        return this.buildComparisonQuery(
+          attributeName,
+          `!= '${value}'`,
+          'NotEquals',
+        );
       case 'contains':
-        return this.buildContainsQuery(attributeName, value);
+        return this.buildComparisonQuery(
+          attributeName,
+          `LIKE '%${value}%'`,
+          'Contains',
+        );
       case 'not_contains':
-        return this.buildNotContainsQuery(attributeName, value);
+        return this.buildComparisonQuery(
+          attributeName,
+          `NOT LIKE '%${value}%'`,
+          'NotContains',
+        );
       case 'is_known':
-        return this.buildIsKnownQuery(attributeName);
+        return this.buildComparisonQuery(attributeName, `!= ''`, 'IsKnown');
       case 'is_unknown':
-        return this.buildIsUnknownQuery(attributeName);
+        return this.buildComparisonQuery(attributeName, `= ''`, 'IsUnknown');
       default:
         throw new Error(`Unsupported custom attribute operator: ${operator}`);
     }
   }
 
-  private async buildEqualsQuery(
+  /**
+   * The *current* value of an attribute is the latest change's `attributeValue`
+   * via argMax(occurred_at); a `removed` change clears it to ''. The predicate
+   * (e.g. `= 'gold'`, `!= ''`) is applied to that current value in HAVING, so a
+   * contact matches on their newest state rather than any historical row.
+   *
+   * Note: a contact with no change event for this attribute does not appear here
+   * (no row to group) — same as the previous GROUP BY behaviour.
+   */
+  private async buildComparisonQuery(
     attributeName: string,
-    value: any,
+    valuePredicate: string,
+    label: string,
   ): Promise<SegmentQueryResult> {
+    const currentValue = `argMax(
+        CASE
+          WHEN JSON_EXTRACT_STRING(ce.traits, 'changeType') = 'removed' THEN ''
+          ELSE JSON_EXTRACT_STRING(ce.traits, 'attributeValue')
+        END,
+        ce.occurred_at
+      )`;
+
     const query = `
-      SELECT DISTINCT ce.contact_id
+      SELECT ce.contact_id
       FROM evo_campaign.contact_events ce
-      WHERE ce.event_name = 'identify'
-        AND JSON_EXTRACT_STRING(ce.traits, '${attributeName}') = '${value}'
+      WHERE ${CustomAttributeSegmentBuilder.EVENT_FILTER}
+        AND JSON_EXTRACT_STRING(ce.traits, 'attributeName') = '${attributeName}'
         AND ${ContactExclusionQueries.getDeletedContactExclusion('ce.contact_id')}
       GROUP BY ce.contact_id
       HAVING ${ContactExclusionQueries.getLatestContactStateExclusion()}
+        AND ${currentValue} ${valuePredicate}
     `;
 
-    this.logQuery(query, 'CustomAttribute-Equals');
-    const contactIds = await this.executeQuery(query);
-
-    return { query, contactIds };
-  }
-
-  private async buildNotEqualsQuery(
-    attributeName: string,
-    value: any,
-  ): Promise<SegmentQueryResult> {
-    const query = `
-      SELECT DISTINCT ce.contact_id
-      FROM evo_campaign.contact_events ce
-      WHERE ce.event_name = 'identify'
-        AND (
-          JSON_EXTRACT_STRING(ce.traits, '${attributeName}') != '${value}'
-          OR JSON_EXTRACT_STRING(ce.traits, '${attributeName}') IS NULL
-        )
-        AND ${ContactExclusionQueries.getDeletedContactExclusion('ce.contact_id')}
-      GROUP BY ce.contact_id
-      HAVING ${ContactExclusionQueries.getLatestContactStateExclusion()}
-    `;
-
-    this.logQuery(query, 'CustomAttribute-NotEquals');
-    const contactIds = await this.executeQuery(query);
-
-    return { query, contactIds };
-  }
-
-  private async buildContainsQuery(
-    attributeName: string,
-    value: any,
-  ): Promise<SegmentQueryResult> {
-    const query = `
-      SELECT DISTINCT ce.contact_id
-      FROM evo_campaign.contact_events ce
-      WHERE ce.event_name = 'identify'
-        AND JSON_EXTRACT_STRING(ce.traits, '${attributeName}') LIKE '%${value}%'
-        AND ${ContactExclusionQueries.getDeletedContactExclusion('ce.contact_id')}
-      GROUP BY ce.contact_id
-      HAVING ${ContactExclusionQueries.getLatestContactStateExclusion()}
-    `;
-
-    this.logQuery(query, 'CustomAttribute-Contains');
-    const contactIds = await this.executeQuery(query);
-
-    return { query, contactIds };
-  }
-
-  private async buildNotContainsQuery(
-    attributeName: string,
-    value: any,
-  ): Promise<SegmentQueryResult> {
-    const query = `
-      SELECT DISTINCT ce.contact_id
-      FROM evo_campaign.contact_events ce
-      WHERE ce.event_name = 'identify'
-        AND (
-          JSON_EXTRACT_STRING(ce.traits, '${attributeName}') NOT LIKE '%${value}%'
-          OR JSON_EXTRACT_STRING(ce.traits, '${attributeName}') IS NULL
-        )
-        AND ${ContactExclusionQueries.getDeletedContactExclusion('ce.contact_id')}
-      GROUP BY ce.contact_id
-      HAVING ${ContactExclusionQueries.getLatestContactStateExclusion()}
-    `;
-
-    this.logQuery(query, 'CustomAttribute-NotContains');
-    const contactIds = await this.executeQuery(query);
-
-    return { query, contactIds };
-  }
-
-  private async buildIsKnownQuery(
-    attributeName: string,
-  ): Promise<SegmentQueryResult> {
-    const query = `
-      SELECT DISTINCT ce.contact_id
-      FROM evo_campaign.contact_events ce
-      WHERE ce.event_name = 'identify'
-        AND JSON_EXTRACT_STRING(ce.traits, '${attributeName}') IS NOT NULL
-        AND JSON_EXTRACT_STRING(ce.traits, '${attributeName}') != ''
-        AND ${ContactExclusionQueries.getDeletedContactExclusion('ce.contact_id')}
-      GROUP BY ce.contact_id
-      HAVING ${ContactExclusionQueries.getLatestContactStateExclusion()}
-    `;
-
-    this.logQuery(query, 'CustomAttribute-IsKnown');
-    const contactIds = await this.executeQuery(query);
-
-    return { query, contactIds };
-  }
-
-  private async buildIsUnknownQuery(
-    attributeName: string,
-  ): Promise<SegmentQueryResult> {
-    const query = `
-      SELECT DISTINCT ce.contact_id
-      FROM evo_campaign.contact_events ce
-      WHERE ce.event_name = 'identify'
-        AND (
-          JSON_EXTRACT_STRING(ce.traits, '${attributeName}') IS NULL
-          OR JSON_EXTRACT_STRING(ce.traits, '${attributeName}') = ''
-        )
-        AND ${ContactExclusionQueries.getDeletedContactExclusion('ce.contact_id')}
-      GROUP BY ce.contact_id
-      HAVING ${ContactExclusionQueries.getLatestContactStateExclusion()}
-    `;
-
-    this.logQuery(query, 'CustomAttribute-IsUnknown');
+    this.logQuery(query, `CustomAttribute-${label}`);
     const contactIds = await this.executeQuery(query);
 
     return { query, contactIds };

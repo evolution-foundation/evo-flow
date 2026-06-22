@@ -532,12 +532,21 @@ export class AtomicSegmentProcessor {
     const definition = segment.definition;
 
     // Check if any node references this event
+    const isCustomAttributeEvent =
+      eventName === 'contact.custom_attribute.changed' ||
+      eventName === 'custom_attribute_changed';
     for (const node of definition.nodes) {
       if (node.type === 'Performed') {
         const performedNode = node as PerformedSegmentNode;
         if (performedNode.event === eventName) {
           return true;
         }
+      }
+      // identify-DTO custom-attribute change (EVO-1839): a CustomAttribute node is
+      // affected when the attribute changes. Match explicitly rather than relying
+      // on the eventType-coincidence in the trait-based fallback below.
+      if (node.type === 'CustomAttribute' && isCustomAttributeEvent) {
+        return true;
       }
     }
 

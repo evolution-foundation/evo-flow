@@ -23,8 +23,11 @@ export class CustomAttributeTrigger extends BaseTrigger {
       triggerConditions: trigger.conditions,
     });
 
-    // Check if it's a custom attribute event
+    // The CRM emits `contact.custom_attribute.changed` (dotted, canonical, an
+    // `identify` event); older producers used the short `custom_attribute_changed`.
+    // Accept both (EVO-1839), like LabelTrigger.
     const isCustomAttributeEvent =
+      event.eventName === 'contact.custom_attribute.changed' ||
       event.eventName === 'custom_attribute_changed';
 
     if (!isCustomAttributeEvent) {
@@ -54,10 +57,14 @@ export class CustomAttributeTrigger extends BaseTrigger {
       return result;
     }
 
-    // Parse event properties to get the attribute details from the event
+    // `contact.custom_attribute.changed` is an `identify` event, so the payload
+    // lands in `traits`, not `properties` (CRM `build_attribute_change_traits`).
+    // Read both and fall back to traits (mirror LabelTrigger, EVO-1839).
     let eventProperties: Record<string, any> = {};
+    let eventTraits: Record<string, any> = {};
     try {
       eventProperties = JSON.parse(event.properties || '{}');
+      eventTraits = JSON.parse(event.traits || '{}');
     } catch (error) {
       const result: TriggerMatchResult = {
         matches: false,
@@ -67,9 +74,12 @@ export class CustomAttributeTrigger extends BaseTrigger {
       return result;
     }
 
-    const eventAttributeName = eventProperties.attributeName;
-    const eventAttributeValue = eventProperties.attributeValue;
-    const changeType = eventProperties.changeType; // added, modified, removed
+    const eventAttributeName =
+      eventProperties.attributeName ?? eventTraits.attributeName;
+    const eventAttributeValue =
+      eventProperties.attributeValue ?? eventTraits.attributeValue;
+    // added, modified, removed
+    const changeType = eventProperties.changeType ?? eventTraits.changeType;
 
     if (!eventAttributeName) {
       const result: TriggerMatchResult = {

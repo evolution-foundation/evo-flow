@@ -394,6 +394,13 @@ export class SegmentJobService {
     switch (node.type) {
       case 'Performed':
         return node.event === eventName;
+      case 'CustomAttribute':
+        // identify-DTO custom-attribute change (EVO-1839): a CustomAttribute node
+        // is affected when the attribute changes. Accept both event-name forms.
+        return (
+          eventName === 'contact.custom_attribute.changed' ||
+          eventName === 'custom_attribute_changed'
+        );
       case 'And':
       case 'Or':
         return true;

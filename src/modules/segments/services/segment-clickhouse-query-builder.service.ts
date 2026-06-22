@@ -688,16 +688,16 @@ export class SegmentClickHouseQueryBuilderService {
                     HAVING argMax(occurred_at, occurred_at) > 0
                   ) THEN 'false'
                   WHEN contact_or_anonymous_id IN (
-                    SELECT DISTINCT contact_or_anonymous_id 
-                    FROM contact_events 
-                    WHERE event_name = 'custom_attribute_changed'
-                      AND JSONExtractString(properties, 'attributeName') = '${customAttrNode.attributeName}'
+                    SELECT DISTINCT contact_or_anonymous_id
+                    FROM contact_events
+                    WHERE event_name IN ('contact.custom_attribute.changed', 'custom_attribute_changed')
+                      AND JSONExtractString(traits, 'attributeName') = '${customAttrNode.attributeName}'
                     GROUP BY contact_or_anonymous_id
                     HAVING argMax(
-                      CASE 
-                        WHEN JSONExtractString(properties, 'changeType') = 'removed' THEN ''
-                        ELSE JSONExtractString(properties, 'attributeValue')
-                      END, 
+                      CASE
+                        WHEN JSONExtractString(traits, 'changeType') = 'removed' THEN ''
+                        ELSE JSONExtractString(traits, 'attributeValue')
+                      END,
                       occurred_at
                     ) ${operator === 'NotEquals' ? '=' : 'LIKE'} ${operator === 'NotEquals' ? `'${value}'` : `'%${value}%'`}
                   ) THEN 'false'
@@ -719,22 +719,24 @@ export class SegmentClickHouseQueryBuilderService {
           ];
         }
 
-        // For positive conditions (Equals, Contains, etc.), use the original logic
-        // Simplified: Use only custom_attribute_changed events
-        const condition = `event_name = 'custom_attribute_changed' AND JSONExtractString(properties, 'attributeName') = '${customAttrNode.attributeName}'`;
+        // For positive conditions (Equals, Contains, etc.), use the original logic.
+        // The custom-attribute change is an identify-DTO event: the CRM stores the
+        // canonical dotted name and the payload in the `traits` column, not
+        // `properties` (EVO-1839). Accept both event-name forms; read from traits.
+        const condition = `event_name IN ('contact.custom_attribute.changed', 'custom_attribute_changed') AND JSONExtractString(traits, 'attributeName') = '${customAttrNode.attributeName}'`;
 
         // Get the current value using argMax - handle removed attributes as empty
         const argMaxValue = `
-          CASE 
+          CASE
             WHEN contact_or_anonymous_id IN (
-              SELECT DISTINCT contact_or_anonymous_id 
-              FROM contact_events 
+              SELECT DISTINCT contact_or_anonymous_id
+              FROM contact_events
               WHERE event_name = 'contact_deleted'
               GROUP BY contact_or_anonymous_id
               HAVING argMax(occurred_at, occurred_at) > 0
             ) THEN ''
-            WHEN JSONExtractString(properties, 'changeType') = 'removed' THEN ''
-            ELSE JSONExtractString(properties, 'attributeValue')
+            WHEN JSONExtractString(traits, 'changeType') = 'removed' THEN ''
+            ELSE JSONExtractString(traits, 'attributeValue')
           END
         `
           .replace(/\s+/g, ' ')

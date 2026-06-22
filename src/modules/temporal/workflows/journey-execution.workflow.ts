@@ -25,6 +25,8 @@ export interface JourneyExecutionInput {
     eventName: string;
     eventType: string;
     properties: Record<string, any>;
+    // identify-DTO payload (custom attribute, label) rides in traits (EVO-1839).
+    traits?: Record<string, any>;
     timestamp: string;
   };
 }

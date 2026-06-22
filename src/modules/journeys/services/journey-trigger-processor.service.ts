@@ -590,6 +590,9 @@ export class JourneyTriggerProcessor implements OnModuleInit, OnModuleDestroy {
                 eventName: event.eventName,
                 eventType: event.eventType,
                 properties: JSON.parse(event.properties || '{}'),
+                // identify-DTO payload (e.g. custom attribute) rides in traits — forward it
+                // so VariableMapping can resolve it (EVO-1839).
+                traits: JSON.parse(event.traits || '{}'),
                 timestamp: event.timestamp,
               },
             }
@@ -693,6 +696,9 @@ export class JourneyTriggerProcessor implements OnModuleInit, OnModuleDestroy {
           eventName: event.eventName,
           eventType: event.eventType,
           properties: JSON.parse(event.properties || '{}'),
+          // identify-DTO payload (e.g. custom attribute) rides in traits — forward it
+          // so VariableMapping can resolve it (EVO-1839).
+          traits: JSON.parse(event.traits || '{}'),
           timestamp: event.timestamp,
         },
       };

@@ -138,8 +138,17 @@ export class SegmentInvalidationService {
       }
     }
 
-    // For custom_attribute_changed events
-    if (eventName === 'custom_attribute_changed') {
+    // For custom-attribute change events (accept both event-name forms, EVO-1839).
+    // NOTE: this `nodeReferencesEvent` is only reached via `segmentReferencesEvent`
+    // → `findAffectedSegments`, and every public method of this service
+    // (findAffectedSegments / bulkInvalidateSegments / enqueueSegmentsForRecomputation)
+    // currently has NO callers — the LIVE invalidation runs in `segment-job.service.ts`
+    // and `atomic-processor.service.ts` (both fixed for EVO-1839). Kept in sync here
+    // for hygiene; do not rely on this path.
+    if (
+      eventName === 'contact.custom_attribute.changed' ||
+      eventName === 'custom_attribute_changed'
+    ) {
       if (node.type === 'CustomAttribute') {
         return true;
       }
