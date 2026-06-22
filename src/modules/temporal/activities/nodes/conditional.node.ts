@@ -1,6 +1,16 @@
 import { BaseNode, NodeExecutionResult } from './base.node';
 
 const CONVERSATION_FIELD_PATTERN = /\{\{conversation\.([^}]+)\}\}/;
+const CONTACT_FIELD_PATTERN = /\{\{contact\.([^}]+)\}\}/;
+
+// Picker-facing contact field names that differ from the loaded
+// `HydratedContact` shape. The field picker offers `{{contact.phone}}`, but the
+// hydrated contact exposes `phoneNumber` — map the leading segment so the
+// offered field actually resolves. Only the head segment is aliased, so nested
+// paths like `customAttributes.<key>` are untouched.
+const CONTACT_FIELD_ALIASES: Record<string, string> = {
+  phone: 'phoneNumber',
+};
 
 export interface ConditionalNodeInput {
   nodeId: string;
@@ -219,6 +229,15 @@ export class ConditionalNode extends BaseNode {
       return this.compareConversationStage(stageIds, operator, value);
     }
 
+    // Contact fields ({{contact.*}}, including customAttributes.*) resolve
+    // against the loaded contact regardless of the condition `type` — the
+    // field can be selected from the shared field picker on any condition
+    // type (mirrors the conversation case above).
+    if (typeof field === 'string' && CONTACT_FIELD_PATTERN.test(field)) {
+      const fieldValue = this.resolveContactField(field, contactData);
+      return this.compareValues(fieldValue, operator, value);
+    }
+
     // Resolve field value based on type
     let fieldValue: any;
 
@@ -282,18 +301,41 @@ export class ConditionalNode extends BaseNode {
   }
 
   /**
-   * Resolve contact field value
+   * Resolve contact field value. Supports nested dot paths so
+   * `{{contact.customAttributes.<attribute_key>}}` reads from the loaded
+   * contact's `customAttributes` map (single-level fields like `email` /
+   * `name` / `identifier` keep resolving unchanged). The leading segment is
+   * run through CONTACT_FIELD_ALIASES so picker names that differ from the
+   * hydrated shape (e.g. `phone` → `phoneNumber`) resolve correctly.
    */
   private resolveContactField(field: string, contactData: any): any {
-    // Handle {{contact.field}} format
-    const match = field.match(/\{\{contact\.([^}]+)\}\}/);
-    if (match) {
-      const fieldName = match[1];
-      return contactData?.[fieldName];
-    }
+    // Handle {{contact.field}} / {{contact.customAttributes.key}} format
+    const match = field.match(CONTACT_FIELD_PATTERN);
+    const rawPath = match ? match[1] : field;
 
-    // Direct field access
-    return contactData?.[field];
+    const [head, ...rest] = rawPath.split('.');
+    const path = [CONTACT_FIELD_ALIASES[head] ?? head, ...rest].join('.');
+
+    return this.resolveNestedPath(contactData, path);
+  }
+
+  /**
+   * Walk a dot-delimited path against an object (e.g.
+   * "customAttributes.plan_interest"). Returns undefined if any segment is
+   * missing. NOTE: unlike set-variable.node.ts (which preserves the literal
+   * {{token}} on a miss), this returns undefined — the correct "no match"
+   * signal for compareValues' null short-circuit.
+   */
+  private resolveNestedPath(obj: unknown, path: string): unknown {
+    return path
+      .split('.')
+      .reduce<unknown>(
+        (acc, part) =>
+          acc != null && typeof acc === 'object'
+            ? (acc as Record<string, unknown>)[part]
+            : undefined,
+        obj,
+      );
   }
 
   /**
@@ -456,9 +498,21 @@ export class ConditionalNode extends BaseNode {
     operator: string,
     expectedValue: any,
   ): boolean {
-    // Handle null/undefined values
+    // Handle null/undefined values. A missing value IS empty, so the
+    // emptiness operators must answer from that fact rather than falling
+    // through to the generic "no match" (which would wrongly report a
+    // missing contact custom attribute as non-empty).
     if (fieldValue == null) {
-      return operator === 'not_equals' ? expectedValue != null : false;
+      switch (operator) {
+        case 'is_empty':
+          return true;
+        case 'is_not_empty':
+          return false;
+        case 'not_equals':
+          return expectedValue != null;
+        default:
+          return false;
+      }
     }
 
     // Convert to strings for comparison

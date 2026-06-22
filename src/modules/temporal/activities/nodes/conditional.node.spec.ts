@@ -213,3 +213,145 @@ describe('ConditionalNode — {{conversation.pipeline_stage_id}}', () => {
     expect((result as any).nextNodeHandle).toBe('p1');
   });
 });
+
+describe('ConditionalNode — {{contact.customAttributes.*}}', () => {
+  let node: ConditionalNode;
+
+  // Loaded contact shape (HydratedContact): customAttributes keyed by
+  // attribute_key slug.
+  const CONTACT = {
+    name: 'Acme',
+    email: 'a@b.com',
+    phoneNumber: '+5511999999999',
+    identifier: 'ext-42',
+    customAttributes: { plan_interest: 'Enterprise' },
+  };
+
+  const inputWith = (
+    field: string,
+    operator: string,
+    value: any,
+    type: 'trigger' | 'contact' | 'system' | 'custom' = 'contact',
+  ): ConditionalNodeInput => ({
+    nodeId: 'n1',
+    contactId: 'c1',
+    sessionId: 's1',
+    nodeData: {
+      paths: [
+        {
+          id: 'p1',
+          name: 'Contact attr path',
+          conditions: [
+            { id: 'cond-1', type, field, operator: operator as any, value },
+          ],
+          logicalOperator: 'AND',
+        },
+      ],
+    },
+  });
+
+  beforeEach(() => {
+    node = new ConditionalNode();
+
+    jest
+      .spyOn(node as any, 'selectiveInterpolateNodeData')
+      .mockImplementation(async (_input, nodeData) => nodeData);
+    jest.spyOn(node as any, 'loadContactData').mockResolvedValue(CONTACT);
+    jest.spyOn(node as any, 'loadSessionVariables').mockResolvedValue({});
+
+    jest.spyOn((node as any).logger, 'log').mockImplementation(() => undefined);
+    jest
+      .spyOn((node as any).logger, 'warn')
+      .mockImplementation(() => undefined);
+    jest
+      .spyOn((node as any).logger, 'error')
+      .mockImplementation(() => undefined);
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  it('matches when the contact custom attribute equals the expected value', async () => {
+    const result = await node.execute(
+      inputWith('{{contact.customAttributes.plan_interest}}', 'equals', 'Enterprise'),
+    );
+
+    expect(result.success).toBe(true);
+    expect((result as any).nextNodeHandle).toBe('p1');
+  });
+
+  it('does not match when the custom attribute differs from the expected value', async () => {
+    const result = await node.execute(
+      inputWith('{{contact.customAttributes.plan_interest}}', 'equals', 'SMB'),
+    );
+
+    expect((result as any).nextNodeHandle).toBe('else');
+  });
+
+  it('missing custom attribute resolves to undefined → no match (no crash)', async () => {
+    const result = await node.execute(
+      inputWith('{{contact.customAttributes.unknown}}', 'equals', 'whatever'),
+    );
+
+    expect(result.success).toBe(true);
+    expect((result as any).nextNodeHandle).toBe('else');
+  });
+
+  it('regression: single-level {{contact.email}} still resolves', async () => {
+    const result = await node.execute(
+      inputWith('{{contact.email}}', 'equals', 'a@b.com'),
+    );
+
+    expect((result as any).nextNodeHandle).toBe('p1');
+  });
+
+  it('alias: {{contact.phone}} resolves against the hydrated phoneNumber field', async () => {
+    const result = await node.execute(
+      inputWith('{{contact.phone}}', 'equals', '+5511999999999'),
+    );
+
+    expect((result as any).nextNodeHandle).toBe('p1');
+  });
+
+  it('is_empty: matches when the custom attribute is absent', async () => {
+    const result = await node.execute(
+      inputWith('{{contact.customAttributes.unknown}}', 'is_empty', ''),
+    );
+
+    expect(result.success).toBe(true);
+    expect((result as any).nextNodeHandle).toBe('p1');
+  });
+
+  it('is_not_empty: does not match when the custom attribute is absent', async () => {
+    const result = await node.execute(
+      inputWith('{{contact.customAttributes.unknown}}', 'is_not_empty', ''),
+    );
+
+    expect((result as any).nextNodeHandle).toBe('else');
+  });
+
+  it('is_not_empty: matches when the custom attribute is present', async () => {
+    const result = await node.execute(
+      inputWith('{{contact.customAttributes.plan_interest}}', 'is_not_empty', ''),
+    );
+
+    expect((result as any).nextNodeHandle).toBe('p1');
+  });
+
+  it('routing: contact-attribute field on a non-contact-typed condition still matches', async () => {
+    // Proves the pre-switch {{contact.*}} handling — not the `type` switch —
+    // drives contact resolution. The picker is shared across condition types,
+    // so a contact attribute may be selected on a `system`/`custom` condition.
+    const result = await node.execute(
+      inputWith(
+        '{{contact.customAttributes.plan_interest}}',
+        'equals',
+        'Enterprise',
+        'system',
+      ),
+    );
+
+    expect((result as any).nextNodeHandle).toBe('p1');
+  });
+});
