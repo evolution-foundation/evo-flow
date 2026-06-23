@@ -217,6 +217,43 @@ export class TriggerNode extends BaseNode {
       return current;
     }
 
+    // Handle custom-attribute mappings. The FE (CustomAttributeConfiguration)
+    // persists `attribute.*` sourcePaths, but `contact.custom_attribute.changed`
+    // is an identify DTO whose payload rides in `traits`
+    // (attributeName/attributeValue/oldValue) — resolve them explicitly so the
+    // VariableMapping actually populates (EVO-1839 AC2).
+    if (parts[0] === 'attribute') {
+      const traits = data.traits || {};
+      const properties = data.properties || {};
+      const key = parts.slice(1).join('.');
+
+      switch (key) {
+        case 'name':
+          return traits.attributeName ?? properties.attributeName;
+        case 'value':
+          return traits.attributeValue ?? properties.attributeValue;
+        case 'previous_value':
+          return traits.oldValue ?? properties.oldValue;
+        case 'timestamp':
+          return data.timestamp;
+      }
+
+      // Attribute-specific paths: `attribute.<name>` / `attribute.<name>_previous`
+      // (the FE emits the selected attribute key verbatim). Only resolve when the
+      // event is for that attribute.
+      const eventAttrName = traits.attributeName ?? properties.attributeName;
+      if (eventAttrName !== undefined) {
+        if (key === `${eventAttrName}_previous`) {
+          return traits.oldValue ?? properties.oldValue;
+        }
+        if (key === eventAttrName) {
+          return traits.attributeValue ?? properties.attributeValue;
+        }
+      }
+
+      return undefined;
+    }
+
     // Handle event paths directly
     if (parts[0] === 'event') {
       const eventPath = parts.slice(1);
