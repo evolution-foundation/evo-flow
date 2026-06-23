@@ -1,5 +1,6 @@
 import { BaseNode, NodeExecutionResult } from './base.node';
 import { getAppContext } from '../../../../shared/app-context.holder';
+import { mapContactDto } from '../../../../shared/crm-client/types/contact';
 
 export interface UpdateCustomAttributeNodeInput {
   nodeId: string;
@@ -49,15 +50,24 @@ export class UpdateCustomAttributeNode extends BaseNode {
       const { contactsService } = await this.getServices();
 
       try {
-        const contact: any = await contactsService.findById(input.contactId);
+        const dto = await contactsService.findById(input.contactId);
 
-        if (!contact) {
+        if (!dto) {
           this.logger.warn(
             'UpdateCustomAttributeNode: contact not found',
             { contactId: input.contactId, attributeId: input.nodeData.attributeId },
           );
           return { skipped: true, reason: 'contact_not_found' } as any;
         }
+
+        // findById returns the raw CRM ContactDto in snake_case wire format
+        // (`custom_attributes`), so map it to the HydratedContact shape before
+        // reading. Reading `dto.customAttributes` directly is always undefined
+        // → existingAttributes would be {} → the read-modify-write below would
+        // send a single-key map and the CRM PATCH (which REPLACES the column)
+        // would wipe every other custom attribute on each run. Mirrors the
+        // read side in conditional.node.ts (EVO-1837).
+        const contact = mapContactDto(dto);
 
         // attributeName carries the attribute_key (slug) — the canonical
         // custom_attributes JSONB key (EVO-1850). The CRM Rails
@@ -66,7 +76,7 @@ export class UpdateCustomAttributeNode extends BaseNode {
         // existing customAttributes and override just this key, otherwise every
         // other custom attribute would be wiped on each run.
         const attributeApiKey = input.nodeData.attributeName;
-        const existingAttributes = (contact.customAttributes ?? {}) as Record<
+        const existingAttributes = (contact?.customAttributes ?? {}) as Record<
           string,
           unknown
         >;

@@ -58,9 +58,12 @@ describe('UpdateCustomAttributeNode', () => {
   it('happy path: read-modify-write — merges new attribute into existing custom_attributes by slug (EVO-1850)', async () => {
     // Pre-existing custom attributes must survive: the CRM PATCH replaces the
     // whole column, so the node sends the full merged map.
+    // findById returns the raw CRM wire format (snake_case `custom_attributes`);
+    // the node maps it via mapContactDto before merging. Mocking the camelCase
+    // shape the client never produces would mask the read-side field bug.
     contactsService.findById.mockResolvedValue({
       id: 'c3',
-      customAttributes: { existing_attr: 'keep', another: 42 },
+      custom_attributes: { existing_attr: 'keep', another: 42 },
     });
     contactsService.setCustomAttributes.mockResolvedValue(undefined);
 
@@ -87,7 +90,7 @@ describe('UpdateCustomAttributeNode', () => {
   it('overwrite: reports the previous value when the slug already had one', async () => {
     contactsService.findById.mockResolvedValue({
       id: 'c3',
-      customAttributes: { plan_tier: 'silver', keep_me: 'x' },
+      custom_attributes: { plan_tier: 'silver', keep_me: 'x' },
     });
     contactsService.setCustomAttributes.mockResolvedValue(undefined);
 
@@ -119,7 +122,7 @@ describe('UpdateCustomAttributeNode', () => {
   });
 
   it('service throw: propagates as createErrorResult', async () => {
-    contactsService.findById.mockResolvedValue({ id: 'c3', customAttributes: {} });
+    contactsService.findById.mockResolvedValue({ id: 'c3', custom_attributes: {} });
     contactsService.setCustomAttributes.mockRejectedValue(
       new Error('CRM 500'),
     );
