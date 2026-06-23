@@ -22,11 +22,13 @@ describe('AppFactory.shouldServeHttp', () => {
     RunMode.CAMPAIGN_SENDER,
     RunMode.CAMPAIGN_TRACKER,
     RunMode.EVENT_PROCESS,
+    // EVO-1764: the dedicated journey worker opens the probe listener so its
+    // /ready (queue-health) + /metrics (poller gauges) are scrapeable.
+    RunMode.TEMPORAL_WORKER,
   ];
   const noServe = [
     RunMode.EVENT_WORKER,
     RunMode.SEGMENT_WORKER,
-    RunMode.TEMPORAL_WORKER,
     RunMode.CAMPAIGN_WORKER,
   ];
 

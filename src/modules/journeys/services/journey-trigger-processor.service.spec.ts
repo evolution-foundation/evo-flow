@@ -1,5 +1,6 @@
 import { JourneyTriggerProcessor } from './journey-trigger-processor.service';
 import { JourneySessionStatus } from '../entities/journey-session.entity';
+import { AppFactory } from '../../../app-factory';
 
 // The constructor spins up a real (Redis-backed) JourneySessionCacheService via
 // initializeSingletonCacheService; mock the module so construction stays I/O-free.
@@ -178,5 +179,54 @@ describe('JourneyTriggerProcessor dispatch fail-fast guard (EVO-1764)', () => {
 
     expect(handle.terminate).not.toHaveBeenCalled();
     expect(updateSessionStatus).toHaveBeenCalled();
+  });
+});
+
+describe('JourneyTriggerProcessor consumer gating (EVO-1764 A1)', () => {
+  let processor: JourneyTriggerProcessor;
+  let initializeKafkaConsumer: jest.Mock;
+  let startConsuming: jest.Mock;
+
+  beforeEach(async () => {
+    processor = new JourneyTriggerProcessor(
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    );
+    ['log', 'warn', 'error'].forEach((m) =>
+      jest
+        .spyOn((processor as any).logger, m)
+        .mockImplementation(() => undefined),
+    );
+    await new Promise((resolve) => setImmediate(resolve));
+
+    initializeKafkaConsumer = jest.fn().mockResolvedValue(undefined);
+    startConsuming = jest.fn().mockResolvedValue(undefined);
+    (processor as any).initializeKafkaConsumer = initializeKafkaConsumer;
+    (processor as any).startConsuming = startConsuming;
+  });
+
+  afterEach(() => jest.restoreAllMocks());
+
+  it('starts the journey-triggers consumer in a journey-worker mode', async () => {
+    jest.spyOn(AppFactory, 'shouldStartJourneyWorker').mockReturnValue(true);
+
+    await processor.onModuleInit();
+
+    expect(initializeKafkaConsumer).toHaveBeenCalledTimes(1);
+    expect(startConsuming).toHaveBeenCalledTimes(1);
+  });
+
+  it('does NOT consume journey-triggers in a non-journey-worker mode (e.g. CAMPAIGN_WORKER) — the fail-fast guard poller is off there, so consuming would dispatch guard-less', async () => {
+    // CAMPAIGN_WORKER is in shouldStartTemporalWorker() (TemporalModule import)
+    // but NOT shouldStartJourneyWorker() — the gate the consumer must honor.
+    jest.spyOn(AppFactory, 'shouldStartJourneyWorker').mockReturnValue(false);
+
+    await processor.onModuleInit();
+
+    expect(initializeKafkaConsumer).not.toHaveBeenCalled();
+    expect(startConsuming).not.toHaveBeenCalled();
   });
 });

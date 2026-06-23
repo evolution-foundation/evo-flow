@@ -122,13 +122,22 @@ export class JourneyTriggerProcessor implements OnModuleInit, OnModuleDestroy {
   }
 
   async onModuleInit() {
-    if (AppFactory.shouldStartTemporalWorker()) {
+    // EVO-1764: gate the journey-triggers consumer on the JOURNEY worker modes
+    // (SINGLE, TEMPORAL_WORKER) — NOT shouldStartTemporalWorker() which also
+    // includes CAMPAIGN_WORKER. The fail-fast guard's queue-health poller only
+    // runs in the journey-worker modes (shouldStartJourneyWorker), so a
+    // CAMPAIGN_WORKER consuming the shared `temporal-workers` group would get
+    // its share of journey-triggers partitions and dispatch them with the guard
+    // permanently no-op (monitoring=false → isQueueUnexecutable short-circuits
+    // to executable) — a silent split-brain stall. The campaign worker has no
+    // reason to consume journey-triggers at all.
+    if (AppFactory.shouldStartJourneyWorker()) {
       this.logger.log('🚀 Starting Journey Trigger Processor...');
       await this.initializeKafkaConsumer();
       await this.startConsuming();
     } else {
       this.logger.log(
-        '⏭️  Journey Trigger Processor disabled (not in TEMPORAL-WORKER mode)',
+        '⏭️  Journey Trigger Processor disabled (not in a journey-worker mode)',
       );
     }
   }
@@ -806,7 +815,8 @@ export class JourneyTriggerProcessor implements OnModuleInit, OnModuleDestroy {
   async getProcessorStatus() {
     return {
       status: this.consumer ? 'connected' : 'disconnected',
-      isRunning: AppFactory.shouldStartTemporalWorker(),
+      // Mirrors the onModuleInit gate (journey-worker modes only) — EVO-1764.
+      isRunning: AppFactory.shouldStartJourneyWorker(),
       config: {
         topic: 'journey-triggers',
         groupId: 'temporal-workers',
