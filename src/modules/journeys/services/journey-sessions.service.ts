@@ -4,6 +4,8 @@ import { CustomLoggerService } from '../../../common/services/custom-logger.serv
 import { JourneySessionCacheService, CachedJourneySession } from '../../cache/services/journey-session-cache.service';
 import { Client, Connection } from '@temporalio/client';
 import { randomUUID } from 'crypto';
+import { TEMPORAL_TASK_QUEUES } from '../../temporal/temporal-task-queues.constants';
+import { JourneyExecutionPollerService } from '../../temporal/services/journey-execution-poller.service';
 
 export interface StartJourneyTriggerEvent {
   messageId: string;
@@ -43,6 +45,8 @@ export class JourneySessionsService {
 
   constructor(
     private readonly sessionCacheService: JourneySessionCacheService,
+    // EVO-1764: same queue-health source of truth as the Kafka trigger guard.
+    private readonly queueHealthPoller: JourneyExecutionPollerService,
   ) {
     this.logger = new CustomLoggerService(JourneySessionsService.name);
   }
@@ -131,7 +135,7 @@ export class JourneySessionsService {
 
     const handle = await client.workflow
       .start(JourneyExecutionWorkflow, {
-        taskQueue: 'journey-execution',
+        taskQueue: TEMPORAL_TASK_QUEUES.JOURNEY_EXECUTION,
         workflowId,
         args: [{ sessionId, journeyId: journey.id, contactId, triggerEvent }],
         workflowExecutionTimeout: '30d',
@@ -143,6 +147,38 @@ export class JourneySessionsService {
         await this.sessionCacheService.invalidate(sessionId);
         throw error;
       });
+
+    // EVO-1764 fail-fast guard for the manual path. `start()` succeeding only
+    // means the workflow was enqueued — if journey-execution has no executor it
+    // would sit unstarted until the 30d timeout while the pre-created ACTIVE row
+    // permanently blocks every future trigger for this contact+journey. A
+    // forced live check (this process may not run the background poller) fails
+    // it fast and visibly: terminate, flip the row to FAILED (so it no longer
+    // blocks), and return started:false so the caller surfaces the error.
+    const { unexecutable } = await this.queueHealthPoller.isQueueUnexecutable({
+      forceLive: true,
+    });
+    if (unexecutable) {
+      await handle
+        .terminate('no journey-execution worker available at dispatch (EVO-1764)')
+        .catch(() => undefined);
+      await this.sessionCacheService.updateSessionStatus(
+        sessionId,
+        JourneySessionStatus.FAILED,
+        {
+          workflowId,
+          workflowRunId: handle.firstExecutionRunId,
+          errorMessage:
+            'no journey-execution worker available — journey not dispatched',
+          failedAt: new Date(),
+        },
+      );
+      this.logger.warn(
+        'Journey not dispatched via manual trigger: no journey-execution worker',
+        { journeyId: journey.id, contactId, sessionId, workflowId },
+      );
+      return { started: false, sessionId, workflowId, reason: 'no_worker_available' };
+    }
 
     await this.sessionCacheService.updateSessionStatus(
       sessionId,

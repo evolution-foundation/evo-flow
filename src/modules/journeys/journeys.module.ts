@@ -14,6 +14,7 @@ import { WaitRegistryService } from './services/wait-registry.service';
 // WaitCheckerJob removed - using Temporal timers instead of Bull queues
 import { ProcessingModule } from '../processing/processing.module';
 import { CacheModule } from '../cache/cache.module';
+import { TemporalQueueHealthModule } from '../temporal/temporal-queue-health.module';
 import { AppFactory } from '../../app-factory';
 
 // Only include JourneyTriggerProcessor if we should start temporal worker
@@ -33,6 +34,7 @@ if (AppFactory.shouldStartTemporalWorker()) {
     // BullModule removed - using Temporal timers instead of Bull queues for wait processing
     ProcessingModule,
     CacheModule, // 🚀 PERFORMANCE: Import cache services for journey performance
+    TemporalQueueHealthModule, // EVO-1764: queue-health poller for the dispatch guard
   ],
   controllers: [JourneysController, JourneySessionsController, ScheduledActionsController],
   providers: moduleProviders,

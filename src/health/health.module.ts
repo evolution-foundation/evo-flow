@@ -8,6 +8,8 @@ import { PostgresHealthIndicator } from './indicators/postgres.health-indicator'
 import { RedisHealthIndicator } from './indicators/redis.health-indicator';
 import { BrokerHealthIndicator } from './indicators/broker.health-indicator';
 import { ClickHouseHealthIndicator } from './indicators/clickhouse.health-indicator';
+import { TemporalTaskQueueIndicator } from './indicators/temporal-task-queue.health-indicator';
+import { TemporalQueueHealthModule } from '../modules/temporal/temporal-queue-health.module';
 
 /**
  * Reusable health module imported by every RUN_MODE (EVO-1226 [5.1]). It owns
@@ -20,7 +22,11 @@ import { ClickHouseHealthIndicator } from './indicators/clickhouse.health-indica
  * from the global graph.
  */
 @Module({
-  imports: [ProcessingModule],
+  // TemporalQueueHealthModule exports the journey-execution queue-health probe
+  // (EVO-1764). It is dependency-light, so importing it into this always-on
+  // module is safe in every RUN_MODE; the indicator is only *evaluated* in the
+  // journey-worker modes (see selectActiveIndicators).
+  imports: [ProcessingModule, TemporalQueueHealthModule],
   controllers: [HealthController],
   providers: [
     PostgresHealthIndicator,
@@ -34,18 +40,21 @@ import { ClickHouseHealthIndicator } from './indicators/clickhouse.health-indica
         RedisHealthIndicator,
         BrokerHealthIndicator,
         ClickHouseHealthIndicator,
+        TemporalTaskQueueIndicator,
       ],
       useFactory: (
         postgres: PostgresHealthIndicator,
         redis: RedisHealthIndicator,
         broker: BrokerHealthIndicator,
         clickhouse: ClickHouseHealthIndicator,
+        temporal: TemporalTaskQueueIndicator,
       ) =>
         selectActiveIndicators(getProcessingConfig().runMode, {
           postgres,
           redis,
           broker,
           clickhouse,
+          temporal,
         }),
     },
   ],

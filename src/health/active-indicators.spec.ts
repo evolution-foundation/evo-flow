@@ -12,6 +12,7 @@ const all: AllIndicators = {
   redis: stub('redis'),
   broker: stub('broker'),
   clickhouse: stub('clickhouse'),
+  temporal: stub('temporal-journey-queue'),
 };
 
 const names = (mode: RunMode) =>
@@ -32,9 +33,23 @@ describe('selectActiveIndicators', () => {
     RunMode.CAMPAIGN_SENDER,
     RunMode.CAMPAIGN_TRACKER,
     RunMode.EVENT_RECEIVER,
-    RunMode.SINGLE,
     RunMode.API,
-  ])('%s excludes ClickHouse, keeps the base trio (AC4)', (mode) => {
+    // SINGLE deliberately excludes the temporal probe so a journey-queue dip
+    // does not 503 the co-located API (EVO-1764).
+    RunMode.SINGLE,
+    RunMode.CAMPAIGN_WORKER,
+  ])('%s excludes ClickHouse + Temporal, keeps the base trio', (mode) => {
     expect(names(mode)).toEqual(['postgres', 'redis', 'broker']);
+  });
+
+  // EVO-1764 (AC9): the journey-execution queue-health probe is added only for
+  // the dedicated temporal-worker (NOT single — see selectActiveIndicators).
+  it('temporal-worker includes the temporal-journey-queue probe (EVO-1764)', () => {
+    expect(names(RunMode.TEMPORAL_WORKER)).toEqual([
+      'postgres',
+      'redis',
+      'broker',
+      'temporal-journey-queue',
+    ]);
   });
 });

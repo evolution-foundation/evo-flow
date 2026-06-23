@@ -28,6 +28,11 @@ export class AppFactory {
       RunMode.CAMPAIGN_SENDER,
       RunMode.CAMPAIGN_TRACKER,
       RunMode.EVENT_PROCESS,
+      // EVO-1764: the dedicated journey worker must expose the probe listener so
+      // its `/ready` (journey-execution queue-health indicator) and `/metrics`
+      // (poller gauges) are scrapeable — otherwise the no-executor signal is
+      // unreachable exactly where the executor runs.
+      RunMode.TEMPORAL_WORKER,
     ].includes(config.runMode);
   }
 

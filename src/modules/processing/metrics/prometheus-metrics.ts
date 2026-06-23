@@ -52,6 +52,44 @@ export class PrometheusMetrics {
     labelNames: ['queue_type'],
   });
 
+  // EVO-1764: Temporal task-queue executor health. `poller_type` is
+  // 'workflow' | 'activity'; a journey needs a WORKFLOW poller to run, so the
+  // WORKFLOW series is the authoritative "is there an executor" signal.
+  public readonly temporalTaskQueuePollers = new Gauge({
+    name: 'evo_temporal_task_queue_pollers',
+    help: 'Number of pollers registered on a Temporal task queue, by poller type',
+    labelNames: ['task_queue', 'poller_type'],
+  });
+
+  // Seconds the queue has had zero WORKFLOW pollers (0 when healthy). Climbs
+  // while no executor is present; an infra alert/Grafana rule thresholds this.
+  public readonly temporalTaskQueueZeroPollerSeconds = new Gauge({
+    name: 'evo_temporal_task_queue_zero_poller_seconds',
+    help: 'Seconds a Temporal task queue has had zero WORKFLOW pollers (0 when healthy)',
+    labelNames: ['task_queue'],
+  });
+
+  /** EVO-1764: publish the journey-execution queue-health gauges in one shot. */
+  setTemporalTaskQueueMetrics(
+    taskQueue: string,
+    workflowPollers: number,
+    activityPollers: number,
+    zeroPollerSeconds: number,
+  ): void {
+    this.temporalTaskQueuePollers.set(
+      { task_queue: taskQueue, poller_type: 'workflow' },
+      workflowPollers,
+    );
+    this.temporalTaskQueuePollers.set(
+      { task_queue: taskQueue, poller_type: 'activity' },
+      activityPollers,
+    );
+    this.temporalTaskQueueZeroPollerSeconds.set(
+      { task_queue: taskQueue },
+      zeroPollerSeconds,
+    );
+  }
+
   // Storage metrics
   public readonly storageOperationsTotal = new Counter({
     name: 'evo_campaign_storage_operations_total',

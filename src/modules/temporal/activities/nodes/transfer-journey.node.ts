@@ -1,5 +1,6 @@
 import { BaseNode, NodeExecutionResult } from './base.node';
 import { getAppContext } from '../../../../shared/app-context.holder';
+import { TEMPORAL_TASK_QUEUES } from '../../temporal-task-queues.constants';
 
 export interface TransferJourneyNodeInput {
   nodeId: string;
@@ -98,7 +99,7 @@ export class TransferJourneyNode extends BaseNode {
 
         // Start the new journey workflow
         const handle = await client.workflow.start(JourneyExecutionWorkflow, {
-          taskQueue: 'journey-execution',
+          taskQueue: TEMPORAL_TASK_QUEUES.JOURNEY_EXECUTION,
           workflowId,
           args: [workflowArgs],
           workflowExecutionTimeout: '24h',

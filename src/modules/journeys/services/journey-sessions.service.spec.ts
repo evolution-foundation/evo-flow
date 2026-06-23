@@ -13,6 +13,7 @@ describe('JourneySessionsService.startJourney', () => {
     updateSessionStatus: jest.Mock;
     invalidate: jest.Mock;
   };
+  let poller: { isQueueUnexecutable: jest.Mock };
   let workflowStart: jest.Mock;
 
   const journey = { id: 'journey-1', name: 'J1' };
@@ -32,7 +33,13 @@ describe('JourneySessionsService.startJourney', () => {
       updateSessionStatus: jest.fn().mockResolvedValue(undefined),
       invalidate: jest.fn().mockResolvedValue(undefined),
     };
-    service = new JourneySessionsService(cache as any);
+    // Default: a healthy queue so the existing happy-path assertions hold.
+    poller = {
+      isQueueUnexecutable: jest
+        .fn()
+        .mockResolvedValue({ unexecutable: false, status: {} }),
+    };
+    service = new JourneySessionsService(cache as any, poller as any);
     jest
       .spyOn((service as any).logger, 'log')
       .mockImplementation(() => undefined);
@@ -42,7 +49,7 @@ describe('JourneySessionsService.startJourney', () => {
 
     workflowStart = jest
       .fn()
-      .mockResolvedValue({ firstExecutionRunId: 'run-1' });
+      .mockResolvedValue({ firstExecutionRunId: 'run-1', terminate: jest.fn() });
     jest
       .spyOn(service as any, 'getTemporalClient')
       .mockResolvedValue({ workflow: { start: workflowStart } });
@@ -126,6 +133,41 @@ describe('JourneySessionsService.startJourney', () => {
     expect(result.started).toBe(true);
     expect(cache.getSessionsByContact).not.toHaveBeenCalled();
     expect(workflowStart).toHaveBeenCalledTimes(1);
+  });
+
+  it('EVO-1764: fails fast when journey-execution has no worker (forceLive)', async () => {
+    const handle = {
+      firstExecutionRunId: 'run-1',
+      terminate: jest.fn().mockResolvedValue(undefined),
+    };
+    workflowStart.mockResolvedValue(handle);
+    poller.isQueueUnexecutable.mockResolvedValue({
+      unexecutable: true,
+      status: { sustainedZeroMs: 0 },
+    });
+
+    const result = await service.startJourney(journey, contactId, triggerEvent);
+
+    // Manual path forces a live check (its process may not run the poller).
+    expect(poller.isQueueUnexecutable).toHaveBeenCalledWith({ forceLive: true });
+    expect(result.started).toBe(false);
+    expect(result.reason).toBe('no_worker_available');
+    // The just-started workflow is terminated and the pre-created ACTIVE row is
+    // flipped to FAILED so it no longer blocks future triggers.
+    expect(handle.terminate).toHaveBeenCalledTimes(1);
+    expect(cache.updateSessionStatus).toHaveBeenCalledWith(
+      result.sessionId,
+      JourneySessionStatus.FAILED,
+      expect.objectContaining({
+        errorMessage: expect.stringContaining('no journey-execution worker'),
+      }),
+    );
+    // Not marked ACTIVE.
+    expect(cache.updateSessionStatus).not.toHaveBeenCalledWith(
+      result.sessionId,
+      JourneySessionStatus.ACTIVE,
+      expect.anything(),
+    );
   });
 
   it('rolls back the created session when the workflow fails to start', async () => {

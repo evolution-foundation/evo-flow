@@ -4,6 +4,13 @@ import { JourneySessionStatus } from '../entities/journey-session.entity';
 // The constructor spins up a real (Redis-backed) JourneySessionCacheService via
 // initializeSingletonCacheService; mock the module so construction stays I/O-free.
 jest.mock('../../cache/services/journey-session-cache.service');
+// triggerJourneyExecution dynamically imports the workflow definition; stub it so
+// the guard test does not load the heavy Temporal workflow graph.
+jest.mock(
+  '../../temporal/workflows/journey-execution.workflow',
+  () => ({ JourneyExecutionWorkflow: jest.fn() }),
+  { virtual: true },
+);
 
 describe('JourneyTriggerProcessor.checkForActiveOrWaitingSessions (EVO-1691)', () => {
   let processor: JourneyTriggerProcessor;
@@ -11,6 +18,7 @@ describe('JourneyTriggerProcessor.checkForActiveOrWaitingSessions (EVO-1691)', (
 
   beforeEach(async () => {
     processor = new JourneyTriggerProcessor(
+      {} as any,
       {} as any,
       {} as any,
       {} as any,
@@ -60,5 +68,115 @@ describe('JourneyTriggerProcessor.checkForActiveOrWaitingSessions (EVO-1691)', (
   it('does not block (returns false) when the session cache errors', async () => {
     getSessionsByContact.mockRejectedValue(new Error('redis down'));
     await expect(check('journey-1')).resolves.toBe(false);
+  });
+});
+
+describe('JourneyTriggerProcessor dispatch fail-fast guard (EVO-1764)', () => {
+  let processor: JourneyTriggerProcessor;
+  let handle: { firstExecutionRunId: string; terminate: jest.Mock };
+  let isQueueUnexecutable: jest.Mock;
+  let createFailedDispatchSession: jest.Mock;
+  let updateSessionStatus: jest.Mock;
+
+  const event = {
+    messageId: 'm-1',
+    contactId: 'contact-1',
+    eventName: 'evt',
+    eventType: 'track',
+    properties: '{}',
+    traits: '{}',
+    timestamp: '2026-06-23T00:00:00.000Z',
+  };
+  const journey = { id: 'journey-1', name: 'J1' };
+
+  const trigger = () =>
+    (processor as any).triggerJourneyExecution(event, journey);
+
+  beforeEach(async () => {
+    processor = new JourneyTriggerProcessor(
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    );
+    ['log', 'warn', 'error'].forEach((m) =>
+      jest
+        .spyOn((processor as any).logger, m)
+        .mockImplementation(() => undefined),
+    );
+    await new Promise((resolve) => setImmediate(resolve));
+
+    handle = {
+      firstExecutionRunId: 'run-1',
+      terminate: jest.fn().mockResolvedValue(undefined),
+    };
+    isQueueUnexecutable = jest.fn();
+    createFailedDispatchSession = jest.fn();
+    updateSessionStatus = jest.fn();
+
+    // No pre-existing session, controllable client + poller + cache.
+    (processor as any).checkForActiveOrWaitingSessions = jest
+      .fn()
+      .mockResolvedValue(false);
+    (processor as any).getTemporalClient = jest.fn().mockResolvedValue({
+      workflow: { start: jest.fn().mockResolvedValue(handle) },
+    });
+    (processor as any).queueHealthPoller = { isQueueUnexecutable };
+    (processor as any).sessionCacheService = {
+      createFailedDispatchSession,
+      updateSessionStatus,
+    };
+  });
+
+  it('AC5: sustained-zero pollers → terminate + session failed, no "active"', async () => {
+    isQueueUnexecutable.mockResolvedValue({
+      unexecutable: true,
+      status: { sustainedZeroMs: 90_000 },
+    });
+
+    await trigger();
+
+    expect(handle.terminate).toHaveBeenCalledTimes(1);
+    expect(createFailedDispatchSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        journeyId: 'journey-1',
+        contactId: 'contact-1',
+        workflowRunId: 'run-1',
+        errorMessage: expect.stringContaining('no journey-execution worker'),
+      }),
+    );
+    expect(updateSessionStatus).not.toHaveBeenCalled();
+  });
+
+  it('AC6: pollers present → normal dispatch, session active, no terminate', async () => {
+    isQueueUnexecutable.mockResolvedValue({
+      unexecutable: false,
+      status: { sustainedZeroMs: 0 },
+    });
+
+    await trigger();
+
+    expect(handle.terminate).not.toHaveBeenCalled();
+    expect(createFailedDispatchSession).not.toHaveBeenCalled();
+    expect(updateSessionStatus).toHaveBeenCalledWith(
+      expect.any(String),
+      'active',
+      expect.objectContaining({ workflowRunId: 'run-1' }),
+    );
+  });
+
+  it('F5: a transient blip that recovers (unexecutable=false) is not terminated', async () => {
+    // isQueueUnexecutable already does a fresh live poll internally; if the
+    // worker returned during the grace window it reports executable.
+    isQueueUnexecutable.mockResolvedValue({
+      unexecutable: false,
+      status: { sustainedZeroMs: 12_000, stale: false },
+    });
+
+    await trigger();
+
+    expect(handle.terminate).not.toHaveBeenCalled();
+    expect(updateSessionStatus).toHaveBeenCalled();
   });
 });

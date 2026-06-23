@@ -149,6 +149,49 @@ export class JourneySessionCacheService extends BaseCacheService<
     );
   }
 
+  /**
+   * Create-or-overwrite a session row in the terminal `failed` state when a
+   * journey could not be dispatched (EVO-1764). The normal failure path goes
+   * through a worker activity that has already created the row, so it can use
+   * `updateSessionStatus`; the dispatch guard runs when there is *no* worker, so
+   * the row does not exist yet and an update-only write would silently no-op.
+   * This goes through `set()` (Redis + Postgres write-through), making the
+   * failed-to-dispatch journey durable and visible instead of vanishing.
+   */
+  async createFailedDispatchSession(params: {
+    sessionId: string;
+    journeyId: string;
+    contactId: string;
+    workflowId?: string;
+    workflowRunId?: string;
+    errorMessage: string;
+  }): Promise<void> {
+    const now = new Date();
+    await this.set({
+      id: params.sessionId,
+      journeyId: params.journeyId,
+      contactId: params.contactId,
+      status: 'failed',
+      workflowId: params.workflowId,
+      workflowRunId: params.workflowRunId,
+      failedAt: now,
+      errorMessage: params.errorMessage,
+      variables: {},
+      retryCount: 0,
+      maxRetries: 3,
+      executionLogs: [],
+      createdAt: now,
+      updatedAt: now,
+      lastCached: now,
+    } as unknown as JourneySession);
+
+    this.eventEmitter.emit('journey-session.status-updated', {
+      id: params.sessionId,
+      status: 'failed',
+      errorMessage: params.errorMessage,
+    });
+  }
+
   async updateSessionStatus(
     sessionId: string,
     status: string,

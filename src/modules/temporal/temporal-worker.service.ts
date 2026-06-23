@@ -6,6 +6,7 @@ import { waitActivities } from './activities/wait.activities';
 import { journeyTrackingActivities } from './activities/journey-tracking.activities';
 import { CustomLoggerService } from 'src/common/services/custom-logger.service';
 import { AppFactory } from '../../app-factory';
+import { TEMPORAL_TASK_QUEUES } from './temporal-task-queues.constants';
 import * as winston from 'winston';
 import * as path from 'path';
 
@@ -181,7 +182,7 @@ export class TemporalWorkerService implements OnModuleInit, OnModuleDestroy {
           `Attempting to start Temporal worker (attempt ${attempt}/${maxAttempts})...`,
           {
             temporalAddress,
-            taskQueue: 'journey-execution',
+            taskQueue: TEMPORAL_TASK_QUEUES.JOURNEY_EXECUTION,
           },
         );
 
@@ -252,7 +253,7 @@ export class TemporalWorkerService implements OnModuleInit, OnModuleDestroy {
 
     this.logger.log('Starting Temporal worker...', {
       temporalAddress,
-      taskQueue: 'journey-execution',
+      taskQueue: TEMPORAL_TASK_QUEUES.JOURNEY_EXECUTION,
     });
 
     try {
@@ -265,7 +266,7 @@ export class TemporalWorkerService implements OnModuleInit, OnModuleDestroy {
       this.worker = await Worker.create({
         connection: this.connection,
         namespace: 'default',
-        taskQueue: 'journey-execution',
+        taskQueue: TEMPORAL_TASK_QUEUES.JOURNEY_EXECUTION,
         workflowsPath: require.resolve(
           './workflows/journey-execution.workflow',
         ),
@@ -369,13 +370,13 @@ export class TemporalWorkerService implements OnModuleInit, OnModuleDestroy {
     if (!this.worker) {
       return {
         status: 'not_started',
-        taskQueue: 'journey-execution',
+        taskQueue: TEMPORAL_TASK_QUEUES.JOURNEY_EXECUTION,
       };
     }
 
     return {
       status: 'running',
-      taskQueue: 'journey-execution',
+      taskQueue: TEMPORAL_TASK_QUEUES.JOURNEY_EXECUTION,
       namespace: 'default',
       temporalAddress: process.env.TEMPORAL_ADDRESS || 'localhost:7233',
     };

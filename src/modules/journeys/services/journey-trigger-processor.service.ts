@@ -13,6 +13,8 @@ import { getProcessingConfig } from '../../processing/config/processing.config';
 import { CustomLoggerService } from 'src/common/services/custom-logger.service';
 import { Client, Connection } from '@temporalio/client';
 import { JourneySessionCacheService } from '../../cache/services/journey-session-cache.service';
+import { JourneyExecutionPollerService } from '../../temporal/services/journey-execution-poller.service';
+import { TEMPORAL_TASK_QUEUES } from '../../temporal/temporal-task-queues.constants';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import {
   EventTrigger,
@@ -59,6 +61,8 @@ export class JourneyTriggerProcessor implements OnModuleInit, OnModuleDestroy {
     @InjectRepository(JourneySession)
     private readonly journeySessionRepository: Repository<JourneySession>,
     injectedSessionCacheService: JourneySessionCacheService,
+    // EVO-1764: queue-health source of truth for the dispatch fail-fast guard.
+    private readonly queueHealthPoller: JourneyExecutionPollerService,
   ) {
     this.initializeTriggerHandlers();
     // Initialize singleton cache service (async but don't wait)
@@ -705,22 +709,71 @@ export class JourneyTriggerProcessor implements OnModuleInit, OnModuleDestroy {
 
       // Start the workflow
       const handle = await client.workflow.start(JourneyExecutionWorkflow, {
-        taskQueue: 'journey-execution',
+        taskQueue: TEMPORAL_TASK_QUEUES.JOURNEY_EXECUTION,
         workflowId,
         args: [workflowArgs],
         workflowExecutionTimeout: '30d', // Journey pode durar até 30 dias com waits
         workflowTaskTimeout: '1m',
       });
 
-      // Update session with workflow information
-      await this.sessionCacheService.updateSessionStatus(
-        sessionId,
-        'active',
-        {
+      // EVO-1764 fail-fast guard: a workflow needs a WORKFLOW poller to run even
+      // its first line, so if journey-execution has genuinely no executor the
+      // workflow we just enqueued sits unstarted until the 30d execution
+      // timeout. Detect that and surface it instead of reporting success. The
+      // check is a *fresh* live poll (closes the start→verdict race) and gates
+      // on *sustained* zero, so a transient Temporal restart/reconnect — from
+      // which the worker auto-recovers (EVO-1758) — never trips it.
+      const { unexecutable, status } =
+        await this.queueHealthPoller.isQueueUnexecutable();
+      if (unexecutable) {
+        // Terminate the just-started workflow so the session (failed) and the
+        // workflow (terminated) stay consistent — otherwise a worker appearing
+        // later would run a journey whose session is already failed.
+        await handle
+          .terminate(
+            'no journey-execution worker available at dispatch (EVO-1764)',
+          )
+          .catch((e) =>
+            this.logger.warn(
+              `Failed to terminate undispatched workflow ${workflowId}: ${e.message}`,
+            ),
+          );
+
+        await this.sessionCacheService.createFailedDispatchSession({
+          sessionId,
+          journeyId: journey.id,
+          contactId: event.contactId,
           workflowId,
           workflowRunId: handle.firstExecutionRunId,
-        },
-      );
+          errorMessage:
+            'no journey-execution worker available — journey not dispatched',
+        });
+
+        this.logger.warn(
+          '⛔ Journey not dispatched: no journey-execution worker',
+          {
+            journeyId: journey.id,
+            journeyName: journey.name,
+            contactId: event.contactId,
+            sessionId,
+            workflowId,
+            sustainedZeroMs: status.sustainedZeroMs,
+          },
+        );
+
+        // Deliberately do NOT throw: the trigger is committed, not retried.
+        // Re-queueing while the queue has no worker only builds backlog; the
+        // readiness 503 + zero-poller gauge alert ops to restore the worker, and
+        // new triggers flow once it returns. The failed session row keeps this
+        // drop auditable (EVO-1764 fail-fast decision).
+        return;
+      }
+
+      // Update session with workflow information
+      await this.sessionCacheService.updateSessionStatus(sessionId, 'active', {
+        workflowId,
+        workflowRunId: handle.firstExecutionRunId,
+      });
 
       this.logger.log(
         `✅ Journey workflow started successfully: ${workflowId}`,

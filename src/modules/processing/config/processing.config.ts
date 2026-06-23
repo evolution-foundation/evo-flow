@@ -4,6 +4,7 @@ dotenv.config();
 
 import { QueueMode, RunMode } from '../enums';
 import { WriteMode } from '../enums/write-mode.enum';
+import { TEMPORAL_TASK_QUEUES } from '../../temporal/temporal-task-queues.constants';
 
 export interface ProcessingConfig {
   runMode: RunMode;
@@ -83,6 +84,16 @@ export interface ProcessingConfig {
     namespace?: string;
     taskQueue?: string;
     workflowTimeoutMs?: number;
+    // EVO-1764 journey-execution queue-health detection + fail-fast guard.
+    // How often the poller calls describeTaskQueue (ms).
+    queuePollIntervalMs: number;
+    // Sustained zero-WORKFLOW-pollers duration before the readiness indicator
+    // flips `down` (ms). Sustained (not instantaneous) so a benign Temporal
+    // restart — from which the worker auto-recovers (EVO-1758) — does not flap.
+    zeroPollerSustainedMs: number;
+    // Grace window the dispatch guard tolerates before failing a triggered
+    // journey as unexecutable (ms). Shorter than the indicator threshold.
+    dispatchGraceMs: number;
   };
 }
 
@@ -195,10 +206,22 @@ export function getProcessingConfig(): ProcessingConfig {
     temporal: {
       serverAddress: process.env.TEMPORAL_ADDRESS || 'localhost:7233',
       namespace: process.env.TEMPORAL_NAMESPACE || 'default',
-      taskQueue: process.env.TEMPORAL_TASK_QUEUE || 'journey-execution',
+      taskQueue:
+        process.env.TEMPORAL_TASK_QUEUE ||
+        TEMPORAL_TASK_QUEUES.JOURNEY_EXECUTION,
       workflowTimeoutMs: parseInt(
         process.env.TEMPORAL_WORKFLOW_TIMEOUT || '300000',
       ), // 5 minutes
+      // EVO-1764 queue-health thresholds.
+      queuePollIntervalMs: parseInt(
+        process.env.TEMPORAL_QUEUE_POLL_INTERVAL_MS || '15000',
+      ),
+      zeroPollerSustainedMs: parseInt(
+        process.env.TEMPORAL_ZERO_POLLER_SUSTAINED_MS || '60000',
+      ),
+      dispatchGraceMs: parseInt(
+        process.env.TEMPORAL_DISPATCH_GRACE_MS || '45000',
+      ),
     },
   };
 }
