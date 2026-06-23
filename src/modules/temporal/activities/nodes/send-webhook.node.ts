@@ -5,6 +5,9 @@ export interface SendWebhookNodeInput {
   nodeId: string;
   contactId: string;
   sessionId: string;
+  // EVO-1882: needed by interpolateNodeData to resolve journey-level variable
+  // defaults; the workflow must supply it at dispatch.
+  journeyId?: string;
   nodeData: {
     webhookUrl: string;
     method: 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH';

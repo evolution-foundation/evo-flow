@@ -761,6 +761,10 @@ export async function JourneyExecutionWorkflow(
               nodeId: currentNode.id,
               contactId: input.contactId,
               sessionId: input.sessionId,
+              // EVO-1882: journeyId is required for interpolateNodeData to load
+              // journey-level variable defaults; without it those {{variables}}
+              // never resolve.
+              journeyId: input.journeyId,
               nodeData: currentNode.data,
             });
             break;
