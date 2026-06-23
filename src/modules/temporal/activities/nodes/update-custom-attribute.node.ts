@@ -59,14 +59,28 @@ export class UpdateCustomAttributeNode extends BaseNode {
           return { skipped: true, reason: 'contact_not_found' } as any;
         }
 
-        // Q3-contacts-service contract: updateCustomAttribute(contactId, attrKey, value).
-        // attrKey == input.nodeData.attributeName (CRM Rails merges by key in the
-        // custom_attributes JSON column). No client-side read-modify-write — the
-        // CRM PATCH merges server-side, so previousValue is not derivable here.
-        await contactsService.updateCustomAttribute(
+        // attributeName carries the attribute_key (slug) — the canonical
+        // custom_attributes JSONB key (EVO-1850). The CRM Rails
+        // `PATCH /contacts/:id` REPLACES the whole custom_attributes column
+        // (it does NOT merge), so we read-modify-write: spread the contact's
+        // existing customAttributes and override just this key, otherwise every
+        // other custom attribute would be wiped on each run.
+        const attributeApiKey = input.nodeData.attributeName;
+        const existingAttributes = (contact.customAttributes ?? {}) as Record<
+          string,
+          unknown
+        >;
+        const previousValue =
+          attributeApiKey in existingAttributes
+            ? existingAttributes[attributeApiKey]
+            : null;
+        const mergedAttributes = {
+          ...existingAttributes,
+          [attributeApiKey]: input.nodeData.newValue,
+        };
+        await contactsService.setCustomAttributes(
           input.contactId,
-          input.nodeData.attributeName,
-          input.nodeData.newValue,
+          mergedAttributes,
         );
 
         this.logger.log('Custom attribute updated successfully', {
@@ -81,8 +95,8 @@ export class UpdateCustomAttributeNode extends BaseNode {
           attributeUpdated: true,
           attributeId: input.nodeData.attributeId,
           attributeName: input.nodeData.attributeName,
-          attributeApiKey: input.nodeData.attributeName,
-          previousValue: null,
+          attributeApiKey,
+          previousValue,
           newValue: input.nodeData.newValue,
         };
       } catch (error) {

@@ -190,6 +190,14 @@ export class ContactsClientService {
     );
   }
 
+  /**
+   * ⚠️ Single-key custom attribute write. The CRM Rails `PATCH /contacts/:id`
+   * endpoint **REPLACES** the whole `custom_attributes` JSONB column (it does
+   * NOT deep-merge, unlike `additional_attributes`), so sending one key here
+   * wipes every other custom attribute on the contact. Prefer
+   * `setCustomAttributes` with a merged map. Kept for callers that genuinely
+   * intend a full replace.
+   */
   async updateCustomAttribute(
     id: string,
     key: string,
@@ -199,6 +207,24 @@ export class ContactsClientService {
     await this.crm.patch<unknown>(
       `/api/v1/contacts/${id}`,
       { custom_attributes: { [key]: value } },
+      opts,
+    );
+  }
+
+  /**
+   * Write the full `custom_attributes` map for a contact. Because the CRM
+   * PATCH replaces the column wholesale, callers must pass the complete map
+   * they want persisted (i.e. read-modify-write: spread the contact's existing
+   * `customAttributes` and override the keys they're changing). See EVO-1850.
+   */
+  async setCustomAttributes(
+    id: string,
+    attributes: Record<string, unknown>,
+    opts?: RequestOptions,
+  ): Promise<void> {
+    await this.crm.patch<unknown>(
+      `/api/v1/contacts/${id}`,
+      { custom_attributes: attributes },
       opts,
     );
   }

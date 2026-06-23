@@ -44,4 +44,16 @@ export class ContactsService {
     this.logger.debug(`updateCustomAttribute(${contactId}, ${attrKey}, ...)`);
     await this.contactsClient.updateCustomAttribute(contactId, attrKey, value);
   }
+
+  /**
+   * Persist the full custom_attributes map (read-modify-write; the CRM PATCH
+   * replaces the column wholesale — EVO-1850).
+   */
+  async setCustomAttributes(
+    contactId: string,
+    attributes: Record<string, unknown>,
+  ): Promise<void> {
+    this.logger.debug(`setCustomAttributes(${contactId}, ...)`);
+    await this.contactsClient.setCustomAttributes(contactId, attributes);
+  }
 }
