@@ -13,6 +13,7 @@ const all: AllIndicators = {
   broker: stub('broker'),
   clickhouse: stub('clickhouse'),
   temporal: stub('temporal-journey-queue'),
+  temporalConnectivity: stub('temporal-connectivity'),
 };
 
 const names = (mode: RunMode) =>
@@ -44,12 +45,14 @@ describe('selectActiveIndicators', () => {
 
   // EVO-1764 (AC9): the journey-execution queue-health probe is added only for
   // the dedicated temporal-worker (NOT single — see selectActiveIndicators).
-  it('temporal-worker includes the temporal-journey-queue probe (EVO-1764)', () => {
+  // EVO-1859: plus the separate temporal-connectivity probe in the same mode.
+  it('temporal-worker includes the queue-health + connectivity probes (EVO-1764/EVO-1859)', () => {
     expect(names(RunMode.TEMPORAL_WORKER)).toEqual([
       'postgres',
       'redis',
       'broker',
       'temporal-journey-queue',
+      'temporal-connectivity',
     ]);
   });
 });

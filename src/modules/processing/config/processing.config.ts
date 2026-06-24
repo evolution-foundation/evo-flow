@@ -91,6 +91,11 @@ export interface ProcessingConfig {
     // flips `down` (ms). Sustained (not instantaneous) so a benign Temporal
     // restart — from which the worker auto-recovers (EVO-1758) — does not flap.
     zeroPollerSustainedMs: number;
+    // Sustained Temporal-unreachable duration before the separate
+    // `temporal-connectivity` readiness indicator flips `down` (ms). Sustained
+    // (not a single failed poll) so a benign restart the worker auto-recovers
+    // from (EVO-1758) does not 503 /ready and risk LB eviction (EVO-1859).
+    temporalUnreachableSustainedMs: number;
     // Grace window the dispatch guard tolerates before failing a triggered
     // journey as unexecutable (ms). Shorter than the indicator threshold.
     dispatchGraceMs: number;
@@ -218,6 +223,9 @@ export function getProcessingConfig(): ProcessingConfig {
       ),
       zeroPollerSustainedMs: parseInt(
         process.env.TEMPORAL_ZERO_POLLER_SUSTAINED_MS || '60000',
+      ),
+      temporalUnreachableSustainedMs: parseInt(
+        process.env.TEMPORAL_UNREACHABLE_SUSTAINED_MS || '60000',
       ),
       dispatchGraceMs: parseInt(
         process.env.TEMPORAL_DISPATCH_GRACE_MS || '45000',

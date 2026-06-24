@@ -113,6 +113,35 @@ describe('JourneyExecutionPollerService (EVO-1764)', () => {
     expect(s.zeroSince).toBeNull();
   });
 
+  it('EVO-1859: tracks how long Temporal has been unreachable (staleSince/staleSustainedMs)', async () => {
+    // A streak of failed polls starts the unreachable clock and keeps it running.
+    describeTaskQueue.mockRejectedValue(new Error('UNAVAILABLE'));
+    await (poller as any).poll();
+    expect(poller.getStatus().staleSince).not.toBeNull();
+
+    const staleSinceFirst = poller.getStatus().staleSince;
+    jest.setSystemTime(new Date('2026-06-23T00:01:01.000Z'));
+    await (poller as any).poll(); // still failing
+    const s = poller.getStatus();
+    expect(s.stale).toBe(true);
+    expect(s.staleSustainedMs).toBeGreaterThanOrEqual(60_000);
+    // The clock anchors to the FIRST failure of the streak, not each poll.
+    expect(s.staleSince).toEqual(staleSinceFirst);
+  });
+
+  it('EVO-1859: recovery resets the unreachable clock', async () => {
+    describeTaskQueue.mockRejectedValue(new Error('UNAVAILABLE'));
+    await (poller as any).poll();
+    expect(poller.getStatus().staleSince).not.toBeNull();
+
+    describeTaskQueue.mockImplementation(pollersFor(1, 1));
+    await (poller as any).poll();
+    const s = poller.getStatus();
+    expect(s.stale).toBe(false);
+    expect(s.staleSince).toBeNull();
+    expect(s.staleSustainedMs).toBe(0);
+  });
+
   it('isQueueUnexecutable: true only on a fresh, confirmed, sustained zero', async () => {
     // Sustained zero for >= dispatchGraceMs (45s).
     describeTaskQueue.mockImplementation(pollersFor(0, 0));

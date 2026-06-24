@@ -250,6 +250,7 @@ export async function JourneyExecutionWorkflow(
         contactId: input.contactId,
         triggerEvent: input.triggerEvent,
         workflowId: info.workflowId,
+        workflowRunId: info.runId, // EVO-1859: persist run id via the authoritative create-path
       });
     } else {
       log.info(
@@ -277,6 +278,7 @@ export async function JourneyExecutionWorkflow(
           contactId: input.contactId,
           triggerEvent: input.triggerEvent,
           workflowId: info.workflowId,
+          workflowRunId: info.runId, // EVO-1859: persist run id via the authoritative create-path
         });
       }
     }

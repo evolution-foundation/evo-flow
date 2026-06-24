@@ -25,6 +25,10 @@ export interface TaskQueuePollerStatus {
   sustainedZeroMs: number;
   healthy: boolean;
   stale: boolean;
+  /** Epoch since which polls have been failing (Temporal unreachable); null when reachable. */
+  staleSince: Date | null;
+  /** How long the queue poll has been failing continuously (ms); 0 when reachable. */
+  staleSustainedMs: number;
 }
 
 /**
@@ -67,6 +71,8 @@ export class JourneyExecutionPollerService
   private zeroSinceMs: number | null = null;
   /** Last poll error message; null after a successful poll (verdict known). */
   private lastError: string | null = null;
+  /** Epoch ms since which polls have been failing continuously; null when reachable (EVO-1859). */
+  private staleSinceMs: number | null = null;
 
   constructor(private readonly metrics: PrometheusMetrics) {}
 
@@ -112,6 +118,9 @@ export class JourneyExecutionPollerService
     const sustainedZeroMs = this.zeroSinceMs
       ? Date.now() - this.zeroSinceMs
       : 0;
+    const staleSustainedMs = this.staleSinceMs
+      ? Date.now() - this.staleSinceMs
+      : 0;
     const threshold = getProcessingConfig().temporal!.zeroPollerSustainedMs;
     // Stale → unknown → do not report unhealthy (a Temporal outage is not the
     // same as "no worker"; see EVO-1758).
@@ -125,6 +134,8 @@ export class JourneyExecutionPollerService
       sustainedZeroMs,
       healthy,
       stale,
+      staleSince: this.staleSinceMs ? new Date(this.staleSinceMs) : null,
+      staleSustainedMs,
     };
   }
 
@@ -223,6 +234,8 @@ export class JourneyExecutionPollerService
       this.workflowPollers = workflow.pollers?.length ?? 0;
       this.activityPollers = activity.pollers?.length ?? 0;
       this.lastError = null;
+      // Reachable again — reset the unreachable clock (EVO-1859).
+      this.staleSinceMs = null;
 
       const now = Date.now();
       if (this.workflowPollers === 0) {
@@ -244,6 +257,9 @@ export class JourneyExecutionPollerService
       // connection so the next poll reconnects. Do NOT advance the zero clock —
       // "Temporal unreachable" must not be read as "no worker" (EVO-1764 F7).
       this.lastError = (err as Error).message;
+      // Start the continuous-unreachable clock on the first failure of a streak;
+      // keep it running across consecutive failures (EVO-1859).
+      if (this.staleSinceMs === null) this.staleSinceMs = Date.now();
       this.logger.warn(
         `journey-execution queue poll failed (held as stale): ${this.lastError}`,
       );

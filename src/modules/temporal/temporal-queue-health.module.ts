@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { ProcessingModule } from '../processing/processing.module';
 import { JourneyExecutionPollerService } from './services/journey-execution-poller.service';
 import { TemporalTaskQueueIndicator } from '../../health/indicators/temporal-task-queue.health-indicator';
+import { TemporalConnectivityIndicator } from '../../health/indicators/temporal-connectivity.health-indicator';
 
 /**
  * Dependency-light home for the `journey-execution` queue-health poller +
@@ -20,7 +21,15 @@ import { TemporalTaskQueueIndicator } from '../../health/indicators/temporal-tas
  */
 @Module({
   imports: [ProcessingModule],
-  providers: [JourneyExecutionPollerService, TemporalTaskQueueIndicator],
-  exports: [JourneyExecutionPollerService, TemporalTaskQueueIndicator],
+  providers: [
+    JourneyExecutionPollerService,
+    TemporalTaskQueueIndicator,
+    TemporalConnectivityIndicator,
+  ],
+  exports: [
+    JourneyExecutionPollerService,
+    TemporalTaskQueueIndicator,
+    TemporalConnectivityIndicator,
+  ],
 })
 export class TemporalQueueHealthModule {}

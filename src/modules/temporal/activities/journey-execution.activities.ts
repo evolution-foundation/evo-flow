@@ -12,6 +12,14 @@ export interface InitializeJourneySessionInput {
   contactId: string;
   workflowId?: string; // The Temporal workflow ID for this session
   /**
+   * The Temporal workflow *run* ID. Threaded from the workflow itself
+   * (`workflowInfo().runId`) so the authoritative create-path persists it
+   * (EVO-1859). Previously only the dispatch-side `updateSessionStatus('active')`
+   * carried it, and that write is update-only — a no-op when it races ahead of
+   * this activity creating the row — so the run id was frequently never stored.
+   */
+  workflowRunId?: string;
+  /**
    * Tenant the journey workflow belongs to (ADR14, story 10.1b). Propagated from
    * the workflow payload so tenant-scoped activity DB access can be wrapped via
    * `runActivityInTenantDbContext`. Optional during the single-tenant phase
@@ -190,7 +198,8 @@ export const journeyExecutionActivities: JourneyExecutionActivities = {
           maxRetries: 3,
           currentNodeId: undefined,
           waitingFor: undefined,
-          workflowRunId: undefined,
+          workflowRunId: input.workflowRunId, // EVO-1859: persist via the create-path, not the racy dispatch update
+
           completedAt: undefined,
           failedAt: undefined,
           errorMessage: undefined,

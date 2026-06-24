@@ -9,6 +9,7 @@ import { RedisHealthIndicator } from './indicators/redis.health-indicator';
 import { BrokerHealthIndicator } from './indicators/broker.health-indicator';
 import { ClickHouseHealthIndicator } from './indicators/clickhouse.health-indicator';
 import { TemporalTaskQueueIndicator } from './indicators/temporal-task-queue.health-indicator';
+import { TemporalConnectivityIndicator } from './indicators/temporal-connectivity.health-indicator';
 import { TemporalQueueHealthModule } from '../modules/temporal/temporal-queue-health.module';
 
 /**
@@ -41,6 +42,7 @@ import { TemporalQueueHealthModule } from '../modules/temporal/temporal-queue-he
         BrokerHealthIndicator,
         ClickHouseHealthIndicator,
         TemporalTaskQueueIndicator,
+        TemporalConnectivityIndicator,
       ],
       useFactory: (
         postgres: PostgresHealthIndicator,
@@ -48,6 +50,7 @@ import { TemporalQueueHealthModule } from '../modules/temporal/temporal-queue-he
         broker: BrokerHealthIndicator,
         clickhouse: ClickHouseHealthIndicator,
         temporal: TemporalTaskQueueIndicator,
+        temporalConnectivity: TemporalConnectivityIndicator,
       ) =>
         selectActiveIndicators(getProcessingConfig().runMode, {
           postgres,
@@ -55,6 +58,7 @@ import { TemporalQueueHealthModule } from '../modules/temporal/temporal-queue-he
           broker,
           clickhouse,
           temporal,
+          temporalConnectivity,
         }),
     },
   ],
