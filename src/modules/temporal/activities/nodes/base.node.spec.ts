@@ -1,0 +1,109 @@
+import { BaseNode, NodeExecutionResult } from './base.node';
+
+// interpolateNodeData dynamically imports the activities module to read the
+// session from cache; stub it so the test drives the session shape directly.
+const mockGetSessionFromCache = jest.fn();
+jest.mock('../journey-execution.activities', () => ({
+  journeyExecutionActivities: {
+    getSessionFromCache: (...args: any[]) => mockGetSessionFromCache(...args),
+  },
+}));
+
+class TestNode extends BaseNode {
+  constructor() {
+    super('test-node');
+  }
+
+  async execute(): Promise<NodeExecutionResult> {
+    return { success: true };
+  }
+
+  // Expose the protected method under test.
+  public interpolate(input: any, nodeData: any): Promise<any> {
+    return this.interpolateNodeData(input, nodeData);
+  }
+}
+
+describe('BaseNode.interpolateNodeData — journeyId fallback (EVO-1885)', () => {
+  let node: TestNode;
+  let findOne: jest.Mock;
+
+  beforeEach(() => {
+    node = new TestNode();
+    findOne = jest.fn();
+    // initializeDatabase is the only DB seam; stub it so getRepository(Journey)
+    // yields our findOne spy and no real connection is opened.
+    jest
+      .spyOn(node as any, 'initializeDatabase')
+      .mockResolvedValue({ getRepository: () => ({ findOne }) });
+    mockGetSessionFromCache.mockReset();
+    findOne.mockReset();
+  });
+
+  it('AC1: falls back to session.journeyId when input omits journeyId, resolving journey-default variables', async () => {
+    mockGetSessionFromCache.mockResolvedValue({
+      id: 's1',
+      journeyId: 'journey-from-session',
+      variables: {},
+    });
+    findOne.mockResolvedValue({
+      variables: [{ name: 'greeting', defaultValue: 'Hi' }],
+    });
+
+    const result = await node.interpolate(
+      { sessionId: 's1' }, // no journeyId on input
+      { message: '{{greeting}}' },
+    );
+
+    expect(findOne).toHaveBeenCalledWith({ where: { id: 'journey-from-session' } });
+    expect(result.message).toBe('Hi');
+  });
+
+  it('AC2: prefers input.journeyId over session.journeyId when both are present', async () => {
+    mockGetSessionFromCache.mockResolvedValue({
+      id: 's1',
+      journeyId: 'journey-from-session',
+      variables: {},
+    });
+    findOne.mockResolvedValue({ variables: [] });
+
+    await node.interpolate(
+      { sessionId: 's1', journeyId: 'journey-from-input' },
+      { message: '{{greeting}}' },
+    );
+
+    expect(findOne).toHaveBeenCalledWith({ where: { id: 'journey-from-input' } });
+  });
+
+  it('AC3: skips the journey query when no id resolves, leaving journey-default tokens literal', async () => {
+    mockGetSessionFromCache.mockResolvedValue({
+      id: 's1',
+      // no journeyId
+      variables: {},
+    });
+
+    const result = await node.interpolate(
+      { sessionId: 's1' }, // no journeyId either
+      { message: '{{greeting}}' },
+    );
+
+    expect(findOne).not.toHaveBeenCalled();
+    expect(result.message).toBe('{{greeting}}');
+  });
+
+  it('still resolves session variables regardless of journeyId (no regression)', async () => {
+    mockGetSessionFromCache.mockResolvedValue({
+      id: 's1',
+      // no journeyId
+      variables: { name: 'Ada' },
+    });
+
+    const result = await node.interpolate(
+      { sessionId: 's1' },
+      { message: 'Hello {{name}}' },
+    );
+
+    expect(findOne).not.toHaveBeenCalled();
+    expect(result.message).toBe('Hello Ada');
+  });
+});

@@ -230,9 +230,16 @@ export abstract class BaseNode {
         '../../../journeys/entities/journey.entity'
       );
       const journeyRepository = dataSource.getRepository(Journey);
-      const journey = await journeyRepository.findOne({
-        where: { id: input.journeyId },
-      });
+      // Most dispatch sites omit input.journeyId (EVO-1885); fall back to the
+      // session's own journeyId (a scalar column present on both the cache and
+      // DB session shapes) so journey-default {{variables}} resolve at every
+      // node, not just the few that thread journeyId explicitly. Guard the query
+      // on a resolved id: findOne({ where: { id: undefined } }) drops the
+      // condition and would return an arbitrary journey's defaults.
+      const journeyId = input.journeyId ?? session.journeyId;
+      const journey = journeyId
+        ? await journeyRepository.findOne({ where: { id: journeyId } })
+        : null;
 
       const context: VariableContext = {
         sessionVariables: session.variables || {},
