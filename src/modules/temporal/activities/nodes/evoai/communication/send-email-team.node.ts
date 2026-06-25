@@ -5,6 +5,7 @@ export interface SendEmailTeamNodeInput {
   nodeId: string;
   conversationId?: string;
   sessionId: string;
+  journeyId?: string; // EVO-1917: resolve journey-default {{variables}} via interpolateNodeData
   nodeData: {
     team_ids?: string[];
     teamIds?: string[];

@@ -4,6 +4,7 @@ export interface UpdateContactNodeInput {
   nodeId: string;
   contactId: string;
   sessionId: string;
+  journeyId?: string; // EVO-1917: resolve journey-default {{variables}} via interpolateNodeData
   nodeData: {
     fieldToUpdate?: string;
     newValue?: any;
