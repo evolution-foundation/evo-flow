@@ -79,8 +79,8 @@ export class CustomAttributeSegmentBuilder extends BaseSegmentBuilder {
   ): Promise<SegmentQueryResult> {
     const currentValue = `argMax(
         CASE
-          WHEN JSON_EXTRACT_STRING(ce.traits, 'changeType') = 'removed' THEN ''
-          ELSE JSON_EXTRACT_STRING(ce.traits, 'attributeValue')
+          WHEN JSONExtractString(ce.traits, 'changeType') = 'removed' THEN ''
+          ELSE JSONExtractString(ce.traits, 'attributeValue')
         END,
         ce.occurred_at
       )`;
@@ -89,7 +89,7 @@ export class CustomAttributeSegmentBuilder extends BaseSegmentBuilder {
       SELECT ce.contact_id
       FROM evo_campaign.contact_events ce
       WHERE ${CustomAttributeSegmentBuilder.EVENT_FILTER}
-        AND JSON_EXTRACT_STRING(ce.traits, 'attributeName') = '${attributeName}'
+        AND JSONExtractString(ce.traits, 'attributeName') = '${attributeName}'
         AND ${ContactExclusionQueries.getDeletedContactExclusion('ce.contact_id')}
       GROUP BY ce.contact_id
       HAVING ${ContactExclusionQueries.getLatestContactStateExclusion()}

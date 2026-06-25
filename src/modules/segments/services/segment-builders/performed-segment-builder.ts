@@ -141,24 +141,24 @@ export class PerformedSegmentBuilder extends BaseSegmentBuilder {
 
       switch (operator) {
         case 'equals':
-          return `JSON_EXTRACT_STRING(ce.properties, '${k}') = '${v}'`;
+          return `JSONExtractString(ce.properties, '${k}') = '${v}'`;
         case 'not_equals':
-          return `JSON_EXTRACT_STRING(ce.properties, '${k}') != '${v}'`;
+          return `JSONExtractString(ce.properties, '${k}') != '${v}'`;
         case 'contains':
-          return `JSON_EXTRACT_STRING(ce.properties, '${k}') LIKE '%${v}%'`;
+          return `JSONExtractString(ce.properties, '${k}') LIKE '%${v}%'`;
         case 'not_contains':
-          return `JSON_EXTRACT_STRING(ce.properties, '${k}') NOT LIKE '%${v}%'`;
+          return `JSONExtractString(ce.properties, '${k}') NOT LIKE '%${v}%'`;
         case 'is_known':
-          return `JSON_EXTRACT_STRING(ce.properties, '${k}') IS NOT NULL AND JSON_EXTRACT_STRING(ce.properties, '${k}') != ''`;
+          return `JSONExtractString(ce.properties, '${k}') IS NOT NULL AND JSONExtractString(ce.properties, '${k}') != ''`;
         case 'is_unknown':
-          return `JSON_EXTRACT_STRING(ce.properties, '${k}') IS NULL OR JSON_EXTRACT_STRING(ce.properties, '${k}') = ''`;
+          return `JSONExtractString(ce.properties, '${k}') IS NULL OR JSONExtractString(ce.properties, '${k}') = ''`;
         case 'greater_than': {
           const num = assertFiniteNumber(value, 'propertyFilter.value');
-          return `toFloat64OrNull(JSON_EXTRACT_STRING(ce.properties, '${k}')) > ${num}`;
+          return `toFloat64OrNull(JSONExtractString(ce.properties, '${k}')) > ${num}`;
         }
         case 'less_than': {
           const num = assertFiniteNumber(value, 'propertyFilter.value');
-          return `toFloat64OrNull(JSON_EXTRACT_STRING(ce.properties, '${k}')) < ${num}`;
+          return `toFloat64OrNull(JSONExtractString(ce.properties, '${k}')) < ${num}`;
         }
         default:
           throw new Error(`Unsupported property filter operator: ${operator}`);

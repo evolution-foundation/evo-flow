@@ -280,7 +280,9 @@ export class SegmentComputationService {
       this.logger.error(
         `Error getting segment contacts from ClickHouse for segment ${segmentId}: ${error.message}`,
       );
-      return [];
+      // Propagate instead of returning [] silently: a ClickHouse failure here
+      // must not be indistinguishable from a genuinely empty segment.
+      throw error;
     }
   }
 
@@ -305,7 +307,8 @@ export class SegmentComputationService {
       return result.map((row: any) => row.segmentId);
     } catch (error: any) {
       this.logger.error(`Error getting contact segments: ${error.message}`);
-      return [];
+      // Propagate: a ClickHouse failure must not look like "contact in no segment".
+      throw error;
     }
   }
 
@@ -335,7 +338,8 @@ export class SegmentComputationService {
       return results.length > 0 ? results[0].inSegment : false;
     } catch (error: any) {
       this.logger.error(`Error checking segment assignment: ${error.message}`);
-      return false;
+      // Propagate: a ClickHouse failure must not be silently treated as "not in segment".
+      throw error;
     }
   }
 
