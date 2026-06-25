@@ -1,14 +1,23 @@
 // AssignBotNode instantiates CrmClientService in its constructor, which
 // requires these env vars. Set them before import so the suite runs (and so the
-// EVO-1919 verification tests below are exercised rather than blocked at ctor).
+// EVO-1919/EVO-1930 verification tests below are exercised rather than blocked
+// at ctor).
 process.env.EVOAI_CRM_API_TOKEN ||= 'test-token';
 process.env.EVOAI_CRM_BASE_URL ||= 'http://crm-test.local';
 
 import { AssignBotNode } from './assign-bot.node';
 
 describe('AssignBotNode', () => {
-  // Build a node with a stubbed crmService. `boundBot` is what getInboxBot
-  // returns inside the `{ data: { data: ... } }` CRM envelope (null = no bind).
+  // Build a node with a stubbed crmService.
+  //
+  // EVO-1930: `getInboxBot` must mirror the REAL CRM envelope. GET
+  // /inboxes/:id/agent_bot returns `success_response(data:
+  // AgentBotSerializer.serialize(agent_bot, agent_bot_inbox:))`, i.e.:
+  //   - bound   → { success, data: { agent_bot: {...}, configuration: {...} } }
+  //   - unbound → { success, data: null }   (serializer returns nil for no bot)
+  // The previous (EVO-1919) spec mocked `{ data: { data: bot } }`, which did NOT
+  // match production and is exactly why the false-negative slipped through.
+  // `boundBot` here is the inbox's bound bot (null = no binding).
   const makeNode = (opts: {
     assignBot?: jest.Mock;
     boundBot?: any;
@@ -20,9 +29,17 @@ describe('AssignBotNode', () => {
       opts.assignBot ?? jest.fn().mockResolvedValue({ success: true, data: {} });
     const getInboxBot =
       opts.getInboxBot ??
-      jest
-        .fn()
-        .mockResolvedValue({ success: true, data: { data: opts.boundBot } });
+      jest.fn().mockResolvedValue({
+        success: true,
+        // Real CRM body: data is null when unbound, otherwise the serializer's
+        // { agent_bot, configuration } shape.
+        data: {
+          success: true,
+          data: opts.boundBot
+            ? { agent_bot: opts.boundBot, configuration: {} }
+            : null,
+        },
+      });
     (node as any).crmService = {
       assignBot,
       getInboxBot,
@@ -84,8 +101,38 @@ describe('AssignBotNode', () => {
     expect(result.skipped).toBeFalsy();
   });
 
+  it('EVO-1930: confirms success when the inbox agent_bot binding reflects the requested bot (no false negative)', async () => {
+    // Real CRM bound envelope: { success, data: { agent_bot: { id }, configuration } }.
+    const { node, getInboxBot } = makeNode({ boundBot: { id: 'b1' } });
+
+    const result = await node.execute({
+      nodeId: 'n1',
+      conversationId: '',
+      sessionId: 's1',
+      nodeData: { inbox_id: 'inbox-1', bot_id: 'b1' },
+    });
+
+    // Re-read targets the INBOX binding (GET /inboxes/:id/agent_bot).
+    expect(getInboxBot).toHaveBeenCalledWith('inbox-1');
+    expect(result.success).toBe(true);
+    expect(result.error).toBeFalsy();
+  });
+
+  it('EVO-1930: tolerates numeric bot ids from the CRM (string-coerced compare)', async () => {
+    const { node } = makeNode({ boundBot: { id: 42 } });
+
+    const result = await node.execute({
+      nodeId: 'n1',
+      conversationId: '',
+      sessionId: 's1',
+      nodeData: { inbox_id: 'inbox-1', bot_id: '42' },
+    });
+
+    expect(result.success).toBe(true);
+  });
+
   it('EVO-1919: fails when CRM returns 2xx but the bot binding was not created (D11)', async () => {
-    // assignBot 200, but re-read shows no bound bot.
+    // assignBot 200, but re-read shows no bound bot (data: null).
     const { node, getInboxBot } = makeNode({ boundBot: null });
 
     const result = await node.execute({
@@ -96,6 +143,20 @@ describe('AssignBotNode', () => {
     });
 
     expect(getInboxBot).toHaveBeenCalledWith('inbox-1');
+    expect(result.success).toBe(false);
+    expect(result.error).toMatch(/not persisted/i);
+  });
+
+  it('EVO-1930: fails when re-read shows a DIFFERENT bot than requested', async () => {
+    const { node } = makeNode({ boundBot: { id: 'other-bot' } });
+
+    const result = await node.execute({
+      nodeId: 'n1',
+      conversationId: '',
+      sessionId: 's1',
+      nodeData: { inbox_id: 'inbox-1', bot_id: 'b1' },
+    });
+
     expect(result.success).toBe(false);
     expect(result.error).toMatch(/not persisted/i);
   });

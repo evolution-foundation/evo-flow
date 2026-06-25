@@ -5,7 +5,6 @@ export interface AssignBotNodeInput {
   nodeId: string;
   conversationId: string;
   sessionId: string;
-  journeyId?: string; // EVO-1917: resolve journey-default {{variables}} via interpolateNodeData
   nodeData: {
     bot_id?: string;
     bot_name?: string;
@@ -54,16 +53,30 @@ export class AssignBotNode extends BaseNode {
 
       // EVO-1919 hardening: POST /inboxes/:id/set_agent_bot returns 200 even
       // when it never creates the agent_bot_inboxes binding (D11). Re-read the
-      // inbox's bound bot and confirm the binding matches the requested state;
-      // fail the node when the effect is unconfirmed.
+      // inbox's bound bot (GET /inboxes/:id/agent_bot) and confirm the binding
+      // matches the requested state; fail the node when the effect is
+      // unconfirmed.
+      //
+      // EVO-1930: the re-read targets the correct inbox resource, but the
+      // confirm predicate parsed the wrong level of the CRM envelope. The CRM
+      // (AgentBotSerializer) wraps the bot under `data.agent_bot` when a binding
+      // exists ({ success, data: { agent_bot: {...}, configuration: {...} } }),
+      // and returns `data: null` when there is no binding. The previous code
+      // read `.id` off the `{ agent_bot, configuration }` wrapper (which has no
+      // `id`), so a present binding produced `boundBotId === null` → false
+      // negative ("does not reflect ... after re-read"). Unwrap `agent_bot`.
       const verification = await this.crmService.verifyEffect<any>(
         { nodeType: 'assign-bot', resourceId: inbox_id },
         () => this.crmService.getInboxBot(inbox_id),
         (botResponse: any) => {
-          // getInboxBot → CrmApiResponse; CRM wraps the bot in `{ data: {...} }`.
-          // Absent binding ⇒ data is null/empty (no `id`).
-          const envelope = botResponse?.data;
-          const boundBot = envelope?.data ?? envelope;
+          // getInboxBot → CrmApiResponse whose `data` is the full CRM body:
+          // { success, data: { agent_bot, configuration } | null, meta }.
+          const body = botResponse?.data;
+          const envelope = body?.data ?? body;
+          // Bound state nests the bot under `agent_bot`; tolerate a flattened
+          // shape too (agent_bot directly), but never treat the wrapper as the
+          // bot itself.
+          const boundBot = envelope?.agent_bot ?? null;
           const boundBotId =
             boundBot?.id !== undefined && boundBot?.id !== null
               ? String(boundBot.id)
