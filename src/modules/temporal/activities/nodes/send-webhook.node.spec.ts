@@ -224,3 +224,101 @@ describe('SendWebhookNode — structured body (EVO-1858)', () => {
     expect(built).toEqual({ total: 30 });
   });
 });
+
+/**
+ * EVO-1916 (e2e D6): a responseMapping must extract the value from the webhook
+ * response AND persist it onto the session as `journey_<variableName>`, so the
+ * value is usable by downstream nodes via `{{journey_<name>}}`. The previous
+ * code returned only Object.keys(...) and spread that array into the variables
+ * map, producing index-keyed junk and dropping every extracted value.
+ */
+describe('SendWebhookNode — responseMappings extraction + persistence (EVO-1916)', () => {
+  let node: SendWebhookNode;
+
+  const inputWith = (
+    overrides: Partial<SendWebhookNodeInput['nodeData']>,
+  ): SendWebhookNodeInput => ({
+    nodeId: 'wh',
+    contactId: 'c1',
+    sessionId: 's1',
+    nodeData: {
+      webhookUrl: 'https://example.test/post',
+      method: 'POST',
+      ...overrides,
+    },
+  });
+
+  beforeEach(() => {
+    node = new SendWebhookNode();
+    jest
+      .spyOn(node as any, 'interpolateNodeData')
+      .mockImplementation(async (_input, nodeData) => nodeData);
+    jest.spyOn(node as any, 'logNodeError').mockImplementation(() => undefined);
+    jest.spyOn((node as any).logger, 'log').mockImplementation(() => undefined);
+    jest.spyOn((node as any).logger, 'warn').mockImplementation(() => undefined);
+    jest
+      .spyOn((node as any).logger, 'error')
+      .mockImplementation(() => undefined);
+
+    mockedAxios.mockReset();
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  it('extracts a nested value and persists it as journey_<name> on the session variables', async () => {
+    // httpbin /post echoes the JSON body under `.json` → response shape {json:{qty:42}}.
+    mockedAxios.mockResolvedValue({ data: { json: { qty: 42 } }, status: 200 });
+
+    const result = await node.execute(
+      inputWith({
+        responseMappings: [
+          { id: 'm1', jsonPath: 'json.qty', variableName: 'echoed_qty' },
+        ],
+      }),
+    );
+
+    expect(result.success).toBe(true);
+    // The actual value lands on the session variables under the journey_ prefix.
+    expect(result.variables!['journey_echoed_qty']).toBe(42);
+    // And no index-keyed junk from spreading an array of names.
+    expect(result.variables!['0']).toBeUndefined();
+  });
+
+  it('accepts a {{variableName}}-wrapped mapping target', async () => {
+    mockedAxios.mockResolvedValue({ data: { token: 'abc' }, status: 200 });
+
+    const result = await node.execute(
+      inputWith({
+        responseMappings: [
+          { id: 'm1', jsonPath: 'token', variableName: '{{auth_token}}' },
+        ],
+      }),
+    );
+
+    expect(result.variables!['journey_auth_token']).toBe('abc');
+  });
+
+  it('persists multiple mappings and skips paths absent from the response', async () => {
+    mockedAxios.mockResolvedValue({
+      data: { a: 1, nested: { b: 'two' } },
+      status: 200,
+    });
+
+    const result = await node.execute(
+      inputWith({
+        responseMappings: [
+          { id: 'm1', jsonPath: 'a', variableName: 'va' },
+          { id: 'm2', jsonPath: 'nested.b', variableName: 'vb' },
+          { id: 'm3', jsonPath: 'missing.path', variableName: 'vc' },
+        ],
+      }),
+    );
+
+    expect(result.variables!['journey_va']).toBe(1);
+    expect(result.variables!['journey_vb']).toBe('two');
+    // Absent path → undefined value → not persisted.
+    expect('journey_vc' in result.variables!).toBe(false);
+  });
+});
