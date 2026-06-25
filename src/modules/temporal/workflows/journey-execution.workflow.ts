@@ -954,19 +954,13 @@ export async function JourneyExecutionWorkflow(
               });
             break;
 
-          case 'snooze-conversation-node':
-            nodeResult =
-              await actionNodeActivities.executeSnoozeConversationNode({
-                nodeId: currentNode.id,
-                conversationId:
-                  input.triggerEvent?.properties?.conversation_id || '',
-                sessionId: input.sessionId,
-                nodeData: currentNode.data,
-              });
-            break;
-
           case 'defer-conversation-node':
-            // Defer aliases snooze — same CRM effect ('snoozed').
+            // `defer-conversation-node` is the single canonical node type the FE
+            // journey editor emits for "snooze/defer". The legacy
+            // `snooze-conversation-node` case was removed (EVO-1920): no FE node,
+            // trigger, or saved-journey fixture ever produced that type, so it was
+            // unreachable. The underlying CRM effect is still "snoozed", which is
+            // why the executor keeps the name `executeSnoozeConversationNode`.
             nodeResult =
               await actionNodeActivities.executeSnoozeConversationNode({
                 nodeId: currentNode.id,
