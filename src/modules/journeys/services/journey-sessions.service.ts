@@ -113,20 +113,31 @@ export class JourneySessionsService {
     const workflowId = `journey-${journey.id}-contact-${contactId}-${Date.now()}`;
     const now = new Date();
 
-    await this.sessionCacheService.set({
-      id: sessionId,
-      journeyId: journey.id,
-      contactId,
-      status: JourneySessionStatus.ACTIVE,
-      variables: {},
-      retryCount: 0,
-      maxRetries: DEFAULT_SESSION_MAX_RETRIES,
-      executionLogs: [],
-      startedAt: now,
-      createdAt: now,
-      updatedAt: now,
-      lastCached: now,
-    } as any);
+    // EVO-1892: persist the session best-effort. The cache (Redis) is enough to
+    // run the workflow — the workflow's first updateJourneySession reads it from
+    // cache. The Postgres write carries a FK to evo_campaign.contacts, which the
+    // community surface never populates, so for a real contact it raises a FK
+    // violation. Letting that abort the start (and leave the just-cached ACTIVE
+    // session orphaned, permanently blocking the contact+journey via the
+    // EVO-1691 guard) is the central blocker we are removing. We start the
+    // workflow off the cache and never orphan; durability is best-effort here.
+    await this.sessionCacheService.set(
+      {
+        id: sessionId,
+        journeyId: journey.id,
+        contactId,
+        status: JourneySessionStatus.ACTIVE,
+        variables: {},
+        retryCount: 0,
+        maxRetries: DEFAULT_SESSION_MAX_RETRIES,
+        executionLogs: [],
+        startedAt: now,
+        createdAt: now,
+        updatedAt: now,
+        lastCached: now,
+      } as any,
+      { bestEffortPersist: true },
+    );
 
     const { JourneyExecutionWorkflow } = await import(
       '../../temporal/workflows/journey-execution.workflow'
@@ -172,6 +183,10 @@ export class JourneySessionsService {
             'no journey-execution worker available — journey not dispatched',
           failedAt: new Date(),
         },
+        // EVO-1892: the create may have persisted best-effort (FK to absent
+        // evo_campaign contact), so the row need not exist in Postgres; keep the
+        // status write best-effort so it cannot throw on the start path.
+        { bestEffortPersist: true },
       );
       this.logger.warn(
         'Journey not dispatched via manual trigger: no journey-execution worker',
@@ -184,6 +199,9 @@ export class JourneySessionsService {
       sessionId,
       JourneySessionStatus.ACTIVE,
       { workflowId, workflowRunId: handle.firstExecutionRunId },
+      // EVO-1892: best-effort for the same reason as the create above — a
+      // FK-failed Postgres write must not abort a workflow that already started.
+      { bestEffortPersist: true },
     );
 
     this.logger.log('Journey workflow started via manual trigger', {
