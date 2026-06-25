@@ -74,8 +74,61 @@ export interface JourneyTrackingActivities {
 // Singleton instances cache
 let trackingServiceCache: JourneyTrackingService | null = null;
 
-// Cached Kafka service instance
+// Cached Kafka service instance. Only populated once the producer is confirmed
+// connected — a half-initialized instance must never be cached (EVO-1894).
 let kafkaServiceCache: any = null;
+
+// When Kafka cannot be initialized/connected (e.g. broker down in the single /
+// temporal-worker process), tracking degrades silently: events become no-ops
+// instead of throwing "Kafka producer not initialized" on every node, which
+// previously flooded the logs with ERROR and masked other failures (EVO-1894).
+let trackingDisabled = false;
+
+/**
+ * Ensure the cached KafkaService has a connected producer.
+ * Returns true when tracking can be sent, false when it should degrade silently.
+ * Caching the instance only after a successful connect prevents a failed init
+ * from leaving a producer-less KafkaService cached and emitting per-event errors.
+ */
+async function ensureKafkaService(): Promise<boolean> {
+  if (kafkaServiceCache) {
+    return true;
+  }
+  if (trackingDisabled) {
+    return false;
+  }
+
+  const { KafkaService } = await import('../../processing/kafka/kafka.service');
+
+  const kafkaService = new KafkaService();
+  try {
+    // Initialize Kafka (admin + producer). onModuleInit honors the processing
+    // config; in single / temporal-worker mode the defaults select Kafka.
+    await kafkaService.onModuleInit();
+
+    // Confirm the producer actually connected before caching — onModuleInit can
+    // skip init (config) or fail mid-way and still leave the instance usable as
+    // a constructed object whose sendEvent() would throw "producer not
+    // initialized" on every call.
+    const status = await kafkaService.getStatus();
+    if (!status?.connected) {
+      throw new Error('Kafka producer not connected after initialization');
+    }
+
+    kafkaServiceCache = kafkaService;
+    log.info('Kafka service initialized for journey tracking');
+    return true;
+  } catch (error: any) {
+    // Degrade once, loudly, then stay quiet for the rest of the process lifetime.
+    trackingDisabled = true;
+    log.warn(
+      'Journey tracking disabled: Kafka producer unavailable. ' +
+        'Tracking events will be skipped (no analytics) for this process.',
+      { error: error.message },
+    );
+    return false;
+  }
+}
 
 // Create tracking service that sends events to Kafka (same pattern as events.service)
 async function createTrackingService(): Promise<JourneyTrackingService> {
@@ -86,9 +139,8 @@ async function createTrackingService(): Promise<JourneyTrackingService> {
 
   try {
     // Import required modules
-    const { KafkaService } = await import('../../processing/kafka/kafka.service');
     const { getProcessingConfig } = await import('../../processing/config/processing.config');
-    
+
     // Check if we're in Kafka mode
     const config = getProcessingConfig();
     log.info('Journey tracking config', {
@@ -96,18 +148,22 @@ async function createTrackingService(): Promise<JourneyTrackingService> {
       writeMode: config.writeMode,
       kafkaTopic: config.kafka?.topic,
     });
-    
-    // Create and initialize Kafka service if not cached
-    if (!kafkaServiceCache) {
-      kafkaServiceCache = new KafkaService();
-      // Force Kafka initialization even if config says otherwise (we need it for tracking)
-      await kafkaServiceCache.onModuleInit();
-      log.info('Kafka service initialized for journey tracking');
-    }
-    
+
+    // Initialize (and validate) the Kafka producer. When unavailable, tracking
+    // degrades to no-op instead of spamming ERROR on every event.
+    const kafkaReady = await ensureKafkaService();
+
     // Create a minimal ProcessingService-like wrapper that sends to Kafka
     const processingServiceLike = {
       async processEvent(eventData: EventData) {
+        // Tracking is degraded (Kafka unavailable in this process): skip
+        // silently so journey execution stays clean of per-event ERROR noise.
+        if (!kafkaReady || !kafkaServiceCache) {
+          return {
+            messageId: eventData.messageId,
+            status: 'success' as const,
+          };
+        }
         try {
           log.info('About to send journey tracking event to Kafka', {
             messageId: eventData.messageId,
