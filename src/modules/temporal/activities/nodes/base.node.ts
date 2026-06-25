@@ -217,10 +217,13 @@ export abstract class BaseNode {
       }
 
       if (!session) {
-        // log.warn('Session not found for variable interpolation', {
-        //   sessionId: input.sessionId,
-        //   triedCache: !!input.accountId,
-        // });
+        // EVO-1913: previously silent. Without a session we cannot resolve
+        // {{variables}} and fall back to raw nodeData ({{var}} reaches the CRM
+        // literally) — make that visible instead of swallowing it.
+        this.logger.warn('Session not found for variable interpolation', {
+          nodeId: input.nodeId,
+          sessionId: input.sessionId,
+        });
         return nodeData;
       }
 
@@ -253,10 +256,14 @@ export abstract class BaseNode {
       // Interpolate the node data
       return VariableInterpolationUtil.interpolateVariables(nodeData, context);
     } catch (error) {
-      // log.warn('Failed to interpolate variables, using original data', {
-      //   nodeId: input.nodeId,
-      //   error: error.message,
-      // });
+      // EVO-1913: this catch returned the raw nodeData with NO log, so a failed
+      // interpolation silently shipped literal {{var}} tokens downstream (across
+      // the ~17 executors that interpolate) with nothing to diagnose. Preserve
+      // the graceful fallback but make the failure visible at ERROR level.
+      this.logger.error('Failed to interpolate variables, using original data', {
+        nodeId: input.nodeId,
+        error: (error as Error)?.message,
+      });
       return nodeData;
     }
   }

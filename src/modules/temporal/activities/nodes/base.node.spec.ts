@@ -107,3 +107,57 @@ describe('BaseNode.interpolateNodeData — journeyId fallback (EVO-1885)', () =>
     expect(result.message).toBe('Hello Ada');
   });
 });
+
+describe('BaseNode.interpolateNodeData — EVO-1913: surfaces swallowed errors', () => {
+  let node: TestNode;
+
+  beforeEach(() => {
+    node = new TestNode();
+    mockGetSessionFromCache.mockReset();
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  it('logs WARN (not silence) when the session is not found, falling back to raw nodeData', async () => {
+    // No session in cache and DB findOne resolves null → the !session branch.
+    mockGetSessionFromCache.mockResolvedValue(null);
+    jest
+      .spyOn(node as any, 'initializeDatabase')
+      .mockResolvedValue({ getRepository: () => ({ findOne: jest.fn().mockResolvedValue(null) }) });
+    const warnSpy = jest
+      .spyOn((node as any).logger, 'warn')
+      .mockImplementation(() => undefined);
+
+    const result = await node.interpolate(
+      { sessionId: 's-missing' },
+      { message: '{{greeting}}' },
+    );
+
+    // Graceful fallback preserved...
+    expect(result.message).toBe('{{greeting}}');
+    // ...but no longer silent.
+    expect(warnSpy).toHaveBeenCalledWith(
+      'Session not found for variable interpolation',
+      expect.objectContaining({ sessionId: 's-missing' }),
+    );
+  });
+
+  it('logs ERROR (not silence) when interpolation throws, still returning the raw nodeData', async () => {
+    // Force the try-block to throw by making the cache lookup reject.
+    mockGetSessionFromCache.mockRejectedValue(new Error('cache boom'));
+    const errorSpy = jest
+      .spyOn((node as any).logger, 'error')
+      .mockImplementation(() => undefined);
+
+    const original = { message: '{{greeting}}' };
+    const result = await node.interpolate({ sessionId: 's1', nodeId: 'n1' }, original);
+
+    expect(result).toBe(original);
+    expect(errorSpy).toHaveBeenCalledWith(
+      'Failed to interpolate variables, using original data',
+      expect.objectContaining({ nodeId: 'n1', error: 'cache boom' }),
+    );
+  });
+});
