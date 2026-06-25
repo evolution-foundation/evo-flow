@@ -112,3 +112,145 @@ describe('JourneysService.getJourneyVariables — EVO-1836 cache-hit preserves v
     expect(result).toEqual(vars);
   });
 });
+
+describe('JourneysService.findActive — EVO-1927 read-through on empty cache', () => {
+  const dbJourney = {
+    id: 'journey-1',
+    name: 'J1',
+    description: '',
+    isActive: true,
+    flowData: {},
+    flowTriggers: [{ type: 'event' }],
+    variables: [],
+    createdAt: new Date('2026-01-01T00:00:00Z'),
+    updatedAt: new Date('2026-01-02T00:00:00Z'),
+  };
+
+  const buildService = (
+    cached: any[],
+    dbActive: any[],
+  ): {
+    service: JourneysService;
+    getActiveJourneys: jest.Mock;
+    set: jest.Mock;
+    find: jest.Mock;
+    warn: jest.Mock;
+  } => {
+    const getActiveJourneys = jest.fn().mockResolvedValue(cached);
+    const set = jest.fn().mockResolvedValue(undefined);
+    const journeyCacheService = { getActiveJourneys, set };
+
+    const find = jest.fn().mockResolvedValue(dbActive);
+    const repo = { find };
+    const db = { getRepository: () => repo };
+
+    const service = new JourneysService(
+      db as any,
+      journeyCacheService as any,
+      {} as any,
+    );
+    const warn = jest
+      .spyOn((service as any).logger, 'warn')
+      .mockImplementation(() => undefined) as unknown as jest.Mock;
+    jest.spyOn((service as any).logger, 'log').mockImplementation(() => undefined);
+
+    return { service, getActiveJourneys, set, find, warn };
+  };
+
+  it('returns cached active journeys without hitting the DB when the cache is warm', async () => {
+    const { service, find } = buildService([dbJourney], []);
+
+    const result = await service.findActive();
+
+    expect(result).toHaveLength(1);
+    expect(result[0].id).toBe('journey-1');
+    expect(find).not.toHaveBeenCalled();
+  });
+
+  it('falls through to the DB and returns active journeys when the cache is empty (post-restart regression)', async () => {
+    const { service, find, set } = buildService([], [dbJourney]);
+
+    const result = await service.findActive();
+
+    expect(find).toHaveBeenCalledWith({
+      where: { isActive: true },
+      order: { createdAt: 'DESC' },
+    });
+    expect(result).toHaveLength(1);
+    expect(result[0].id).toBe('journey-1');
+    // Cache repopulated so the next read is a hit.
+    expect(set).toHaveBeenCalledWith(dbJourney);
+  });
+
+  it('warns when the cache returns 0 but the DB has active journeys (observability)', async () => {
+    const { service, warn } = buildService([], [dbJourney]);
+
+    await service.findActive();
+
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining('findActive cache miss'),
+    );
+  });
+
+  it('returns [] without warning when both cache and DB are empty', async () => {
+    const { service, warn, set } = buildService([], []);
+
+    const result = await service.findActive();
+
+    expect(result).toEqual([]);
+    expect(warn).not.toHaveBeenCalled();
+    expect(set).not.toHaveBeenCalled();
+  });
+
+  it('still returns DB journeys when repopulating the cache fails (best-effort)', async () => {
+    const { service, set } = buildService([], [dbJourney]);
+    set.mockRejectedValue(new Error('redis down'));
+
+    const result = await service.findActive();
+
+    expect(result).toHaveLength(1);
+    expect(result[0].id).toBe('journey-1');
+  });
+});
+
+describe('JourneysService.warmActiveJourneysCache — EVO-1927 boot warm-up', () => {
+  const buildService = (
+    dbActive: any[],
+  ): { service: JourneysService; set: jest.Mock; find: jest.Mock } => {
+    const set = jest.fn().mockResolvedValue(undefined);
+    const find = jest.fn().mockResolvedValue(dbActive);
+    const db = { getRepository: () => ({ find }) };
+    const service = new JourneysService(
+      db as any,
+      { set } as any,
+      {} as any,
+    );
+    jest.spyOn((service as any).logger, 'log').mockImplementation(() => undefined);
+    jest.spyOn((service as any).logger, 'warn').mockImplementation(() => undefined);
+    return { service, set, find };
+  };
+
+  it('loads active journeys from the DB and populates the cache', async () => {
+    const j1 = { id: 'j1', isActive: true };
+    const j2 = { id: 'j2', isActive: true };
+    const { service, set, find } = buildService([j1, j2]);
+
+    const count = await service.warmActiveJourneysCache();
+
+    expect(find).toHaveBeenCalledWith({
+      where: { isActive: true },
+      order: { createdAt: 'DESC' },
+    });
+    expect(set).toHaveBeenCalledTimes(2);
+    expect(set).toHaveBeenCalledWith(j1);
+    expect(set).toHaveBeenCalledWith(j2);
+    expect(count).toBe(2);
+  });
+
+  it('does not throw when a per-journey cache write fails', async () => {
+    const { service, set } = buildService([{ id: 'j1', isActive: true }]);
+    set.mockRejectedValue(new Error('redis down'));
+
+    await expect(service.warmActiveJourneysCache()).resolves.toBe(1);
+  });
+});

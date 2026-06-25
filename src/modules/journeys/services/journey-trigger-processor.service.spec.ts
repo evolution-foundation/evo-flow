@@ -282,10 +282,12 @@ describe('JourneyTriggerProcessor consumer gating (EVO-1764 A1)', () => {
   let processor: JourneyTriggerProcessor;
   let initializeKafkaConsumer: jest.Mock;
   let startConsuming: jest.Mock;
+  let warmActiveJourneysCache: jest.Mock;
 
   beforeEach(async () => {
+    warmActiveJourneysCache = jest.fn().mockResolvedValue(0);
     processor = new JourneyTriggerProcessor(
-      {} as any,
+      { warmActiveJourneysCache } as any,
       {} as any,
       {} as any,
       {} as any,
@@ -324,5 +326,47 @@ describe('JourneyTriggerProcessor consumer gating (EVO-1764 A1)', () => {
 
     expect(initializeKafkaConsumer).not.toHaveBeenCalled();
     expect(startConsuming).not.toHaveBeenCalled();
+  });
+
+  // EVO-1927: warm the active-journey cache from the DB before consuming so a
+  // post-restart event matches against the real journey set, not an empty cache.
+  it('warms the active-journey cache BEFORE subscribing to journey-triggers (EVO-1927)', async () => {
+    jest.spyOn(AppFactory, 'shouldStartJourneyWorker').mockReturnValue(true);
+
+    const callOrder: string[] = [];
+    warmActiveJourneysCache.mockImplementation(async () => {
+      callOrder.push('warm');
+      return 3;
+    });
+    initializeKafkaConsumer.mockImplementation(async () => {
+      callOrder.push('init');
+    });
+    startConsuming.mockImplementation(async () => {
+      callOrder.push('consume');
+    });
+
+    await processor.onModuleInit();
+
+    expect(warmActiveJourneysCache).toHaveBeenCalledTimes(1);
+    // Warm-up must run before the consumer is wired up and starts.
+    expect(callOrder).toEqual(['warm', 'init', 'consume']);
+  });
+
+  it('still starts consuming when the warm-up fails — read-through fallback covers it (EVO-1927)', async () => {
+    jest.spyOn(AppFactory, 'shouldStartJourneyWorker').mockReturnValue(true);
+    warmActiveJourneysCache.mockRejectedValue(new Error('db down at boot'));
+
+    await processor.onModuleInit();
+
+    expect(initializeKafkaConsumer).toHaveBeenCalledTimes(1);
+    expect(startConsuming).toHaveBeenCalledTimes(1);
+  });
+
+  it('does NOT warm the cache in a non-journey-worker mode', async () => {
+    jest.spyOn(AppFactory, 'shouldStartJourneyWorker').mockReturnValue(false);
+
+    await processor.onModuleInit();
+
+    expect(warmActiveJourneysCache).not.toHaveBeenCalled();
   });
 });

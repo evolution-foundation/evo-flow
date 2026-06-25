@@ -179,17 +179,85 @@ export class JourneysService {
   async findActive(): Promise<Journey[]> {
     const cachedJourneys = await this.journeyCacheService.getActiveJourneys();
 
-    return cachedJourneys.map(cached => ({
-      id: cached.id,
-      name: cached.name,
-      description: cached.description,
-      isActive: cached.isActive,
-      flowData: cached.flowData,
-      flowTriggers: cached.flowTriggers,
-      variables: cached.variables,
-      createdAt: cached.createdAt instanceof Date ? cached.createdAt : new Date(cached.createdAt),
-      updatedAt: cached.updatedAt instanceof Date ? cached.updatedAt : new Date(cached.updatedAt),
-    } as Journey));
+    if (cachedJourneys.length > 0) {
+      return cachedJourneys.map(cached => ({
+        id: cached.id,
+        name: cached.name,
+        description: cached.description,
+        isActive: cached.isActive,
+        flowData: cached.flowData,
+        flowTriggers: cached.flowTriggers,
+        variables: cached.variables,
+        createdAt: cached.createdAt instanceof Date ? cached.createdAt : new Date(cached.createdAt),
+        updatedAt: cached.updatedAt instanceof Date ? cached.updatedAt : new Date(cached.updatedAt),
+      } as Journey));
+    }
+
+    // EVO-1927: read-through fallback. After an evo-flow restart the Redis
+    // active-journey index can be empty/stale and there is no implicit warm-up,
+    // so `getActiveJourneys()` returns []. The JourneyTriggerProcessor would
+    // then match every event against ZERO journeys and silently drop
+    // event-based triggers (Postgres has active journeys; cache reports none).
+    // On a cache miss, fall through to the DB as the source of truth and
+    // repopulate the cache so subsequent reads are served from Redis again.
+    const dbActiveJourneys = await this.journeyRepository.find({
+      where: { isActive: true },
+      order: { createdAt: 'DESC' },
+    });
+
+    if (dbActiveJourneys.length > 0) {
+      // Observability: cache returned 0 while the DB has active journeys —
+      // this is the regression signature, surface it.
+      this.logger.warn(
+        `findActive cache miss: active-journey cache returned 0 but DB has ${dbActiveJourneys.length} active journeys — serving from DB and repopulating cache (EVO-1927)`,
+      );
+
+      // Repopulate the cache (index + per-journey keys) so the next read is a
+      // cache hit. Best-effort: a cache write failure must not stop us returning
+      // the journeys we already have from the DB.
+      for (const journey of dbActiveJourneys) {
+        try {
+          await this.journeyCacheService.set(journey);
+        } catch (error) {
+          this.logger.warn(
+            `Failed to repopulate journey cache for ${journey.id}: ${error.message}`,
+          );
+        }
+      }
+    }
+
+    return dbActiveJourneys;
+  }
+
+  /**
+   * EVO-1927: warm the active-journey cache from Postgres. Called at boot by
+   * the JourneyTriggerProcessor BEFORE it starts consuming `journey-triggers`,
+   * so the very first event matches against the real set of active journeys
+   * instead of an empty (post-restart) Redis index. Best-effort and idempotent
+   * — `set()` upserts into the index — so a partial failure just degrades to
+   * the read-through fallback in `findActive`.
+   */
+  async warmActiveJourneysCache(): Promise<number> {
+    const dbActiveJourneys = await this.journeyRepository.find({
+      where: { isActive: true },
+      order: { createdAt: 'DESC' },
+    });
+
+    for (const journey of dbActiveJourneys) {
+      try {
+        await this.journeyCacheService.set(journey);
+      } catch (error) {
+        this.logger.warn(
+          `Failed to warm journey cache for ${journey.id}: ${error.message}`,
+        );
+      }
+    }
+
+    this.logger.log(
+      `Warmed active-journey cache with ${dbActiveJourneys.length} journeys from DB (EVO-1927)`,
+    );
+
+    return dbActiveJourneys.length;
   }
 
   async validateFlowData(journey: Journey): Promise<boolean> {
