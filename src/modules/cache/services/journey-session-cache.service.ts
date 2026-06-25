@@ -89,6 +89,27 @@ export class JourneySessionCacheService extends BaseCacheService<
   private async persistToDatabase(value: JourneySession): Promise<void> {
     const v = value as unknown as CachedJourneySession;
     try {
+      // EVO-1929: `journey_sessions.contact_id` carries a FK to
+      // `evo_campaign.contacts` (FK_journey_sessions_contact_id, ON DELETE
+      // CASCADE), but the evo-flow community surface never populates that table
+      // — `ContactsService`/`ContactsClientService` are HTTP proxies to the CRM
+      // (Rails), so a contact that exists only in the CRM has no row here.
+      // EVO-1892 made the journey *start* path swallow the resulting FK
+      // violation (best-effort), but the per-node runtime writes from the
+      // Temporal activity still go through this durable (throwing) path, so the
+      // first per-node session persistence aborts the journey at node 1 for any
+      // contact not pre-seeded into evo_campaign.contacts.
+      //
+      // Fix (option b — lazy upsert): guarantee a minimal `contacts` row exists
+      // before saving the session. The contacts table requires only `id`; every
+      // other column has a DB default ('', false, '{}'::jsonb) or is nullable
+      // (see init-base-tables migration), so an id-only insert yields a valid
+      // row. `ON CONFLICT (id) DO NOTHING` keeps it idempotent and never
+      // clobbers a real CRM-synced contact. This resolves the root cause on ALL
+      // write paths while preserving referential integrity (vs. relaxing the
+      // FK).
+      await this.ensureContactRow(v.contactId);
+
       await this.repository.save({
         id: v.id,
         journeyId: v.journeyId,
@@ -114,6 +135,28 @@ export class JourneySessionCacheService extends BaseCacheService<
       );
       throw error;
     }
+  }
+
+  /**
+   * EVO-1929: idempotently ensure a minimal `contacts` row exists so the
+   * `journey_sessions.contact_id` FK is satisfied before persisting a session.
+   *
+   * The contacts table is owned by the CRM (Rails) and only the `id` column is
+   * mandatory — all other columns have DB-level defaults or are nullable — so
+   * an id-only insert is a valid, minimal row. `ON CONFLICT (id) DO NOTHING`
+   * makes this a no-op when the contact already exists (CRM-synced or seeded),
+   * so it never overwrites real contact data and is safe to call on every
+   * session write. A missing/non-uuid id is skipped (the save itself will then
+   * fail loudly, preserving the existing error contract).
+   */
+  private async ensureContactRow(contactId?: string): Promise<void> {
+    if (!contactId) {
+      return;
+    }
+    await this.repository.manager.query(
+      'INSERT INTO contacts (id) VALUES ($1) ON CONFLICT (id) DO NOTHING',
+      [contactId],
+    );
   }
 
   async getActiveSessionsByJourney(
