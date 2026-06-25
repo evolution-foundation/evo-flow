@@ -16,7 +16,6 @@ import { SegmentChangeDetectionService } from './services/segment-change-detecti
 import { SegmentClickHouseQueryBuilderService } from './services/segment-clickhouse-query-builder.service';
 import { SegmentQueryExecutionService } from './services/segment-query-execution.service';
 import { SegmentAssignmentService } from './services/segment-assignment.service';
-import { SegmentBuilderFactory } from './factories/segment-builder.factory';
 import { SegmentEventsService } from './services/segment-events.service';
 import { DeletedContactsCacheService } from './services/deleted-contacts-cache.service';
 import { SegmentCircuitBreakerService } from './services/segment-circuit-breaker.service';
@@ -52,7 +51,6 @@ import { initializeServiceLocator } from './services/service-locator';
     SegmentClickHouseQueryBuilderService,
     SegmentQueryExecutionService,
     SegmentAssignmentService,
-    SegmentBuilderFactory,
     SegmentEventsService,
     DeletedContactsCacheService,
     SegmentCircuitBreakerService,
