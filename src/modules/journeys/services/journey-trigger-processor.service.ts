@@ -133,6 +133,22 @@ export class JourneyTriggerProcessor implements OnModuleInit, OnModuleDestroy {
     // reason to consume journey-triggers at all.
     if (AppFactory.shouldStartJourneyWorker()) {
       this.logger.log('🚀 Starting Journey Trigger Processor...');
+      // EVO-1927: warm the active-journey cache from Postgres BEFORE consuming.
+      // After a restart the Redis active-journey index is empty/stale and there
+      // is no implicit warm-up, so the first events would otherwise match
+      // against ZERO journeys and event-based triggers would silently die.
+      // Best-effort: a warm-up failure falls back to the read-through in
+      // JourneysService.findActive, so it must not block the consumer.
+      try {
+        const warmed = await this.journeysService.warmActiveJourneysCache();
+        this.logger.log(
+          `🔥 Warmed active-journey cache with ${warmed} journeys before consuming (EVO-1927)`,
+        );
+      } catch (error) {
+        this.logger.warn(
+          `⚠️ Failed to warm active-journey cache at boot (read-through fallback will cover this): ${error.message}`,
+        );
+      }
       await this.initializeKafkaConsumer();
       await this.startConsuming();
     } else {
