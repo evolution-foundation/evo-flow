@@ -127,6 +127,8 @@ describe('JourneyTriggerProcessor dispatch fail-fast guard (EVO-1764)', () => {
     (processor as any).sessionCacheService = {
       createFailedDispatchSession,
       updateSessionStatus,
+      // EVO-1896: dedup guard claims the messageId before dispatch; first call wins.
+      tryClaimTriggerMessage: jest.fn().mockResolvedValue(true),
     };
   });
 
@@ -179,6 +181,100 @@ describe('JourneyTriggerProcessor dispatch fail-fast guard (EVO-1764)', () => {
 
     expect(handle.terminate).not.toHaveBeenCalled();
     expect(updateSessionStatus).toHaveBeenCalled();
+  });
+});
+
+describe('JourneyTriggerProcessor messageId idempotency (EVO-1896)', () => {
+  let processor: JourneyTriggerProcessor;
+  let tryClaimTriggerMessage: jest.Mock;
+  let workflowStart: jest.Mock;
+  let updateSessionStatus: jest.Mock;
+
+  const baseEvent = {
+    messageId: 'msg-dup-1',
+    contactId: 'contact-1',
+    eventName: 'evt',
+    eventType: 'track',
+    properties: '{}',
+    traits: '{}',
+    timestamp: '2026-06-24T00:00:00.000Z',
+  };
+  const journey = { id: 'journey-1', name: 'J1' };
+
+  const trigger = (event: any = baseEvent) =>
+    (processor as any).triggerJourneyExecution(event, journey);
+
+  beforeEach(async () => {
+    processor = new JourneyTriggerProcessor(
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    );
+    ['log', 'warn', 'error'].forEach((m) =>
+      jest
+        .spyOn((processor as any).logger, m)
+        .mockImplementation(() => undefined),
+    );
+    await new Promise((resolve) => setImmediate(resolve));
+
+    workflowStart = jest.fn().mockResolvedValue({
+      firstExecutionRunId: 'run-1',
+      terminate: jest.fn().mockResolvedValue(undefined),
+    });
+    updateSessionStatus = jest.fn();
+    tryClaimTriggerMessage = jest.fn();
+
+    (processor as any).checkForActiveOrWaitingSessions = jest
+      .fn()
+      .mockResolvedValue(false);
+    (processor as any).getTemporalClient = jest.fn().mockResolvedValue({
+      workflow: { start: workflowStart },
+    });
+    (processor as any).queueHealthPoller = {
+      isQueueUnexecutable: jest
+        .fn()
+        .mockResolvedValue({ unexecutable: false, status: {} }),
+    };
+    (processor as any).sessionCacheService = {
+      createFailedDispatchSession: jest.fn(),
+      updateSessionStatus,
+      tryClaimTriggerMessage,
+    };
+  });
+
+  it('starts the workflow when the messageId is claimed (first delivery)', async () => {
+    tryClaimTriggerMessage.mockResolvedValue(true);
+
+    await trigger();
+
+    expect(tryClaimTriggerMessage).toHaveBeenCalledWith(
+      'journey-1',
+      'contact-1',
+      'msg-dup-1',
+    );
+    expect(workflowStart).toHaveBeenCalledTimes(1);
+    expect(updateSessionStatus).toHaveBeenCalled();
+  });
+
+  it('skips the workflow on a redelivered messageId (claim refused)', async () => {
+    tryClaimTriggerMessage.mockResolvedValue(false);
+
+    await trigger();
+
+    expect(tryClaimTriggerMessage).toHaveBeenCalledTimes(1);
+    expect(workflowStart).not.toHaveBeenCalled();
+    expect(updateSessionStatus).not.toHaveBeenCalled();
+  });
+
+  it('does not dedup when the event has no messageId (proceeds)', async () => {
+    const noId = { ...baseEvent, messageId: undefined };
+
+    await trigger(noId);
+
+    expect(tryClaimTriggerMessage).not.toHaveBeenCalled();
+    expect(workflowStart).toHaveBeenCalledTimes(1);
   });
 });
 

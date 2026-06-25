@@ -684,6 +684,46 @@ export class JourneyTriggerProcessor implements OnModuleInit, OnModuleDestroy {
         journeyName: journey.name,
       });
 
+      // EVO-1896: idempotency guard. Kafka is at-least-once, so the SAME
+      // trigger event can be redelivered after the first run already completed.
+      // The active/waiting-session guard above only blocks concurrent re-entry;
+      // it does not cover sequential replays of a terminal session. Dedup on the
+      // producer-stable messageId — scoped to (journey, contact) — so a replay
+      // of the exact same event is dropped while distinct events still start.
+      // Atomic SET NX claims the messageId for the first caller (race-safe).
+      // When messageId is absent we can't identify the event, so we skip the
+      // dedup rather than block (degrades to today's behaviour, no false drops).
+      if (event.messageId) {
+        const claimed = await this.sessionCacheService.tryClaimTriggerMessage(
+          journey.id,
+          event.contactId,
+          event.messageId,
+        );
+
+        if (!claimed) {
+          this.logger.warn(
+            '⏭️  Skipping duplicate trigger — messageId already processed for this journey/contact (EVO-1896)',
+            {
+              contactId: event.contactId,
+              journeyId: journey.id,
+              journeyName: journey.name,
+              messageId: event.messageId,
+              eventName: event.eventName,
+            },
+          );
+          return;
+        }
+      } else {
+        this.logger.warn(
+          '⚠️ Trigger event has no messageId — idempotency dedup skipped (EVO-1896)',
+          {
+            contactId: event.contactId,
+            journeyId: journey.id,
+            eventName: event.eventName,
+          },
+        );
+      }
+
       // Import JourneyExecutionWorkflow
       const { JourneyExecutionWorkflow } = await import(
         '../../temporal/workflows/journey-execution.workflow'
