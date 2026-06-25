@@ -93,16 +93,18 @@ jest.mock('./redis-singleton.service', () => ({
 
 import { JourneySessionCacheService } from './journey-session-cache.service';
 
-function makeRepository(): jest.Mocked<
+type MockRepository = jest.Mocked<
   Pick<Repository<JourneySession>, 'findOne' | 'find' | 'save'>
-> {
+> & { manager: { query: jest.Mock } };
+
+function makeRepository(): MockRepository {
   return {
     findOne: jest.fn().mockResolvedValue(null),
     find: jest.fn().mockResolvedValue([]),
     save: jest.fn().mockImplementation((e) => Promise.resolve(e)),
-  } as unknown as jest.Mocked<
-    Pick<Repository<JourneySession>, 'findOne' | 'find' | 'save'>
-  >;
+    // EVO-1929: the lazy contact upsert runs through the entity manager.
+    manager: { query: jest.fn().mockResolvedValue([]) },
+  } as unknown as MockRepository;
 }
 
 function makeSession(id: string): JourneySession {
@@ -364,5 +366,66 @@ describe('JourneySessionCacheService — best-effort persistence on start path (
     await expect(
       service.updateSessionStatus('sess-up2', 'completed'),
     ).rejects.toThrow('db down');
+  });
+});
+
+describe('JourneySessionCacheService — lazy contact upsert satisfies FK (EVO-1929)', () => {
+  beforeEach(() => {
+    mockKv.clear();
+    mockSets.clear();
+    jest.clearAllMocks();
+  });
+
+  it('upserts a minimal contacts row before saving a session for a CRM-only contact', async () => {
+    const repo = makeRepository();
+    const service = makeService(repo);
+
+    const session = makeSession('sess-fk');
+    (session as unknown as { contactId: string }).contactId = 'crm-only-contact';
+
+    await service.set(session);
+
+    // The contact row is ensured BEFORE the session is persisted, so the
+    // FK_journey_sessions_contact_id constraint is always satisfied.
+    expect(repo.manager.query).toHaveBeenCalledWith(
+      'INSERT INTO contacts (id) VALUES ($1) ON CONFLICT (id) DO NOTHING',
+      ['crm-only-contact'],
+    );
+    const upsertOrder = repo.manager.query.mock.invocationCallOrder[0];
+    const saveOrder = repo.save.mock.invocationCallOrder[0];
+    expect(upsertOrder).toBeLessThan(saveOrder);
+    expect(repo.save).toHaveBeenCalledTimes(1);
+  });
+
+  it('runs the idempotent upsert on per-node runtime writes (not just start)', async () => {
+    const repo = makeRepository();
+    const service = makeService(repo);
+
+    // First write creates the session (and ensures the contact)...
+    await service.set(makeSession('sess-runtime'));
+    repo.manager.query.mockClear();
+
+    // ...a subsequent per-node status transition (the runtime path that used
+    // to FK-fail) also runs the idempotent upsert.
+    await service.updateSessionStatus('sess-runtime', 'completed', {
+      completedAt: new Date('2026-06-03T00:00:00Z'),
+    });
+
+    expect(repo.manager.query).toHaveBeenCalledWith(
+      'INSERT INTO contacts (id) VALUES ($1) ON CONFLICT (id) DO NOTHING',
+      ['contact-1'],
+    );
+  });
+
+  it('skips the upsert when the session has no contact id', async () => {
+    const repo = makeRepository();
+    const service = makeService(repo);
+
+    const session = makeSession('sess-no-contact');
+    (session as unknown as { contactId?: string }).contactId = undefined;
+
+    await service.set(session);
+
+    expect(repo.manager.query).not.toHaveBeenCalled();
   });
 });
