@@ -5,6 +5,7 @@ export interface AssignBotNodeInput {
   nodeId: string;
   conversationId: string;
   sessionId: string;
+  journeyId?: string; // EVO-1917: resolve journey-default {{variables}} via interpolateNodeData
   nodeData: {
     bot_id?: string;
     bot_name?: string;
