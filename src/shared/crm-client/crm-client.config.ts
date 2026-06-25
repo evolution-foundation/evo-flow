@@ -28,12 +28,29 @@ export interface CrmClientConfig {
    * total) on 5xx/network errors, matching the PRD (FR35, NFR31).
    */
   genericRetryBackoffMs: number[];
+  /**
+   * EVO-1919 hardening: when true (default), journey write-nodes whose effect
+   * is cheaply verifiable (add-label, assign-bot) re-read the resource after a
+   * 2xx write and fail the node if the change did not persist — defense in
+   * depth against CRM endpoints that respond 200 without persisting (D8/D11).
+   * Set `EVOAI_JOURNEY_VERIFY_EFFECT=false` to disable (e.g. to shave the extra
+   * GET if latency matters and the CRM persistence is trusted).
+   */
+  journeyVerifyEffect: boolean;
 }
 
 const parseInteger = (value: string | undefined, fallback: number): number => {
   if (!value) return fallback;
   const parsed = Number.parseInt(value, 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+};
+
+const parseBoolean = (value: string | undefined, fallback: boolean): boolean => {
+  if (value === undefined || value === '') return fallback;
+  const normalized = value.trim().toLowerCase();
+  if (['false', '0', 'no', 'off'].includes(normalized)) return false;
+  if (['true', '1', 'yes', 'on'].includes(normalized)) return true;
+  return fallback;
 };
 
 const parseBackoffSchedule = (
@@ -66,5 +83,9 @@ export const getCrmClientConfig = (): CrmClientConfig => ({
   genericRetryBackoffMs: parseBackoffSchedule(
     process.env.EVOAI_CRM_CLIENT_RETRY_BACKOFF_MS,
     [1_000, 2_000, 4_000],
+  ),
+  journeyVerifyEffect: parseBoolean(
+    process.env.EVOAI_JOURNEY_VERIFY_EFFECT,
+    true,
   ),
 });

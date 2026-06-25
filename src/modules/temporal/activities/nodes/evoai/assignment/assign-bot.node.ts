@@ -51,6 +51,37 @@ export class AssignBotNode extends BaseNode {
       const isUnassignment = !bot_id;
       const action = isUnassignment ? 'unassigned' : 'assigned';
 
+      // EVO-1919 hardening: POST /inboxes/:id/set_agent_bot returns 200 even
+      // when it never creates the agent_bot_inboxes binding (D11). Re-read the
+      // inbox's bound bot and confirm the binding matches the requested state;
+      // fail the node when the effect is unconfirmed.
+      const verification = await this.crmService.verifyEffect<any>(
+        { nodeType: 'assign-bot', resourceId: inbox_id },
+        () => this.crmService.getInboxBot(inbox_id),
+        (botResponse: any) => {
+          // getInboxBot → CrmApiResponse; CRM wraps the bot in `{ data: {...} }`.
+          // Absent binding ⇒ data is null/empty (no `id`).
+          const envelope = botResponse?.data;
+          const boundBot = envelope?.data ?? envelope;
+          const boundBotId =
+            boundBot?.id !== undefined && boundBot?.id !== null
+              ? String(boundBot.id)
+              : null;
+          if (isUnassignment) {
+            return boundBotId === null;
+          }
+          return boundBotId === String(bot_id);
+        },
+      );
+
+      if (verification.verified && !verification.confirmed) {
+        throw new Error(
+          `Bot ${action} not persisted: CRM accepted the request (2xx) but the ` +
+            `inbox ${inbox_id} bot binding does not reflect ` +
+            `${isUnassignment ? 'unassignment' : `bot ${bot_id}`} after re-read`,
+        );
+      }
+
       // Log successful assignment/unassignment
       this.logger.log(`Bot ${action} successfully`, {
         conversationId: input.conversationId,
@@ -58,6 +89,7 @@ export class AssignBotNode extends BaseNode {
         inboxId: inbox_id,
         action,
         nodeId: input.nodeId,
+        effectVerified: verification.verified,
       });
 
       return {

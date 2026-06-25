@@ -1,5 +1,6 @@
 import { BaseNode, NodeExecutionResult } from './base.node';
 import { getAppContext } from '../../../../shared/app-context.holder';
+import { CrmClientService } from '../../../../shared/crm-client/crm-client.service';
 
 export interface AddLabelNodeInput {
   nodeId: string;
@@ -16,9 +17,11 @@ export interface AddLabelNodeInput {
 export class AddLabelNode extends BaseNode {
   private labelsService: any = null;
   private contactsService: any = null;
+  private crmService: CrmClientService;
 
   constructor() {
     super('AddLabel');
+    this.crmService = new CrmClientService();
   }
 
   private async getServices() {
@@ -82,11 +85,41 @@ export class AddLabelNode extends BaseNode {
 
         await labelsService.addLabel(input.contactId, labelNameOrId);
 
+        // EVO-1919 hardening: a 2xx from POST /contacts/:id/labels does NOT
+        // guarantee the tagging persisted (D8 — CRM returned 200 without
+        // writing). Re-read the contact (no-cache) and confirm the label is
+        // actually present; fail the node when the effect is unconfirmed.
+        const verification = await this.crmService.verifyEffect<any>(
+          { nodeType: 'add-label', resourceId: input.contactId },
+          () =>
+            contactsService.findById(input.contactId, { noCache: true }),
+          (contact: any) => {
+            const labels: Array<{ id?: string; title?: string }> =
+              contact?.labels ?? [];
+            return labels.some(
+              (lbl) =>
+                lbl?.id === labelNameOrId ||
+                lbl?.title === labelNameOrId ||
+                lbl?.id === labelId ||
+                lbl?.title === input.labelName,
+            );
+          },
+        );
+
+        if (verification.verified && !verification.confirmed) {
+          throw new Error(
+            `Label not persisted: CRM accepted the request (2xx) but the ` +
+              `tag "${labelNameOrId}" is absent on contact ${input.contactId} ` +
+              `after re-read`,
+          );
+        }
+
         this.logger.log('Label added to contact successfully', {
           contactId: input.contactId,
           labelId: labelId,
           labelName: input.labelName ?? null,
           sessionId: input.sessionId,
+          effectVerified: verification.verified,
         });
 
         return {
