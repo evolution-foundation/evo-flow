@@ -251,7 +251,12 @@ export class SendWebhookNode extends BaseNode {
       return {
         webhookStatus: 'success',
         responseData: webhookResponse,
-        extractedVariables: Object.keys(extractedVariables),
+        // EVO-1916: carry the FULL key→value map (journey_<name> → value), not
+        // just Object.keys(...). The success branch below spreads this into the
+        // session variables; spreading an array of names there produced
+        // index-keyed junk ({0:'journey_x'}) and dropped every extracted value,
+        // so {{journey_<name>}} never resolved in downstream nodes (D6).
+        extractedVariables,
       };
     })
       .then(({ result, executionTime }) => {
@@ -260,6 +265,7 @@ export class SendWebhookNode extends BaseNode {
           [`node_${input.nodeId}_response_size`]: JSON.stringify(
             result.responseData || {},
           ).length,
+          // Persist the extracted journey_<name> variables onto the session.
           ...result.extractedVariables,
         });
       })
@@ -293,11 +299,23 @@ export class SendWebhookNode extends BaseNode {
   }
 
   /**
-   * Extract variable name from {{variableName}} format
+   * Resolve the bare variable name from a response-mapping `variableName`.
+   *
+   * EVO-1916: the editor stores the mapping target as a plain identifier
+   * (e.g. `echoed_qty`), but some authoring paths wrap it as `{{echoed_qty}}`.
+   * Accept both: unwrap the `{{ }}` when present, otherwise use the trimmed
+   * literal. Returning null only for a genuinely empty name means a typical
+   * mapping no longer silently drops its extracted value.
    */
-  private extractVariableName(variableExpression: string): string | null {
+  private extractVariableName(
+    variableExpression: string | null | undefined,
+  ): string | null {
+    if (!variableExpression) {
+      return null;
+    }
     const match = variableExpression.match(/\{\{([^}]+)\}\}/);
-    return match ? match[1].trim() : null;
+    const name = match ? match[1].trim() : variableExpression.trim();
+    return name.length > 0 ? name : null;
   }
 
   /**
