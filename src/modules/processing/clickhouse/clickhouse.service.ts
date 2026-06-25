@@ -771,6 +771,97 @@ export class ClickHouseService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
+   * Ensure a Kafka Engine table points at the currently configured broker.
+   *
+   * Kafka Engine tables created with `CREATE TABLE IF NOT EXISTS` "freeze" the
+   * broker string from the first boot. If that boot lacked KAFKA_BROKERS_INTERNAL
+   * the table is stuck on 'localhost:9092' forever — ClickHouse can't reach Kafka
+   * and the topic silently receives nothing (EVO-1893). This reads the existing
+   * DDL, and if the broker diverges from `expectedBrokers`, drops the dependent
+   * materialized views and the Kafka table so the caller can recreate them with
+   * the right broker.
+   *
+   * @returns true if the table was dropped (stale), false if absent or already correct.
+   */
+  private async ensureKafkaEngineBroker(
+    databaseName: string,
+    tableName: string,
+    expectedBrokers: string,
+    dependentViews: string[] = [],
+  ): Promise<boolean> {
+    try {
+      const rows = await this.query<{ engine: string; create: string }>({
+        query: `
+          SELECT engine, create_table_query AS create
+          FROM system.tables
+          WHERE database = {database:String} AND name = {table:String}
+        `,
+        parameters: { database: databaseName, table: tableName },
+      });
+
+      const existing = rows?.[0];
+
+      // Table doesn't exist yet → nothing to fix, caller will create it fresh.
+      if (!existing) {
+        return false;
+      }
+
+      // Only Kafka Engine tables carry a frozen broker; anything else is left alone.
+      if (existing.engine !== 'Kafka') {
+        return false;
+      }
+
+      const currentBrokers = this.extractKafkaBrokers(existing.create);
+
+      if (currentBrokers === expectedBrokers) {
+        this.logger.log(
+          `Kafka Engine table '${databaseName}.${tableName}' already points at the configured broker ('${expectedBrokers}')`,
+        );
+        return false;
+      }
+
+      this.logger.warn(
+        `⚠️ Kafka Engine table '${databaseName}.${tableName}' is bound to a stale broker ` +
+          `('${currentBrokers ?? 'unknown'}') but the configured broker is '${expectedBrokers}'. ` +
+          `Recreating it so journey triggers reach Kafka (EVO-1893).`,
+      );
+
+      // Drop dependent materialized views first (they block dropping the source).
+      for (const view of dependentViews) {
+        await this.command({
+          query: `DROP VIEW IF EXISTS ${databaseName}.${view}`,
+        });
+        this.logger.log(`Dropped stale dependent view '${databaseName}.${view}'`);
+      }
+
+      await this.command({
+        query: `DROP TABLE IF EXISTS ${databaseName}.${tableName}`,
+      });
+      this.logger.log(
+        `Dropped stale Kafka Engine table '${databaseName}.${tableName}'`,
+      );
+
+      return true;
+    } catch (error) {
+      // Don't block boot on the validation itself; recreating is best-effort.
+      this.logger.error(
+        `Failed to validate broker for '${databaseName}.${tableName}': ${error.message}`,
+        error.stack,
+      );
+      return false;
+    }
+  }
+
+  /**
+   * Extract the broker list from a Kafka Engine DDL, e.g.
+   * `... ENGINE = Kafka('broker:9092', 'topic', ...)` → `broker:9092`.
+   */
+  private extractKafkaBrokers(createTableQuery: string): string | null {
+    const match = createTableQuery.match(/Kafka\(\s*'([^']*)'/i);
+    return match ? match[1] : null;
+  }
+
+  /**
    * Create Journey Trigger Queue infrastructure
    * This creates Kafka engine table and materialized view to feed ALL events to journey triggers
    */
@@ -791,6 +882,21 @@ export class ClickHouseService implements OnModuleInit, OnModuleDestroy {
         `Using Kafka brokers for Journey Triggers: ${kafkaBrokers}`,
       );
 
+      // 0. Guard against a stale broker "frozen" by a previous boot (EVO-1893).
+      //    The table is created with `IF NOT EXISTS`, so if a first boot ran
+      //    without KAFKA_BROKERS_INTERNAL it baked in 'localhost:9092' and every
+      //    later boot keeps the wrong broker → ClickHouse can't reach Kafka, the
+      //    topic stays empty and NO event-based journey fires, silently.
+      //    Detect divergence and DROP+recreate so the configured broker wins.
+      await this.ensureKafkaEngineBroker(
+        databaseName,
+        'journey_trigger_kafka_queue',
+        kafkaBrokers,
+        // The MV reads from contact_events and writes into the queue table; it
+        // must be dropped before the underlying Kafka table can be dropped.
+        ['events_to_journey_triggers_mv'],
+      );
+
       // 1. Create Kafka table for journey triggers
       await this.command({
         query: `
@@ -806,7 +912,7 @@ export class ClickHouseService implements OnModuleInit, OnModuleDestroy {
             timestamp String
           )
           ENGINE = Kafka('${kafkaBrokers}', '${kafkaTopic}', '${kafkaGroupId}', 'JSONEachRow')
-          SETTINGS 
+          SETTINGS
             kafka_thread_per_consumer = 1,
             kafka_num_consumers = 2,
             kafka_max_block_size = 1048576,
@@ -839,6 +945,12 @@ export class ClickHouseService implements OnModuleInit, OnModuleDestroy {
 
       this.logger.log('Materialized view for journey triggers created');
 
+      // Surface what broker the live table actually ended up bound to, so a
+      // stale/unreachable broker is visible in the logs instead of failing
+      // silently (the ClickHouse Kafka Engine produces into the topic in the
+      // background and swallows connection errors). EVO-1893.
+      await this.logJourneyTriggerKafkaState(databaseName);
+
       this.logger.log(
         '✅ Journey Trigger Queue infrastructure created successfully',
       );
@@ -849,6 +961,67 @@ export class ClickHouseService implements OnModuleInit, OnModuleDestroy {
       );
       // Don't throw - allow system to continue without journey triggers
       this.logger.warn('System will continue without journey trigger queue');
+    }
+  }
+
+  /**
+   * Log the broker the journey-trigger Kafka Engine table is actually bound to,
+   * plus any Kafka exceptions ClickHouse has recorded for it. The Kafka Engine
+   * consumes/produces in the background and does not raise to this Node process,
+   * so without this the only failure mode is a silently empty topic (EVO-1893).
+   */
+  private async logJourneyTriggerKafkaState(databaseName: string) {
+    try {
+      const rows = await this.query<{ create: string }>({
+        query: `
+          SELECT create_table_query AS create
+          FROM system.tables
+          WHERE database = {database:String} AND name = 'journey_trigger_kafka_queue'
+        `,
+        parameters: { database: databaseName },
+      });
+
+      const brokers = rows?.[0]
+        ? this.extractKafkaBrokers(rows[0].create)
+        : null;
+      this.logger.log(
+        `Journey-trigger Kafka Engine table is bound to broker '${brokers ?? 'unknown'}'`,
+      );
+
+      // system.kafka_consumers carries the last exception per consumer (e.g.
+      // "Connection refused"). Best-effort: older ClickHouse versions may lack
+      // some columns, so any failure here is downgraded to a debug line.
+      try {
+        const errors = await this.query<{
+          last_exception: string;
+          num_messages_read: string;
+        }>({
+          query: `
+            SELECT
+              last_exception,
+              num_messages_read
+            FROM system.kafka_consumers
+            WHERE database = {database:String}
+              AND table = 'journey_trigger_kafka_queue'
+              AND last_exception != ''
+          `,
+          parameters: { database: databaseName },
+        });
+
+        for (const row of errors ?? []) {
+          this.logger.error(
+            `❌ ClickHouse Kafka Engine error on journey-trigger topic: ${row.last_exception}`,
+          );
+        }
+      } catch (innerError) {
+        this.logger.debug(
+          `Could not read system.kafka_consumers for journey triggers: ${innerError.message}`,
+        );
+      }
+    } catch (error) {
+      this.logger.warn(
+        `Could not inspect journey-trigger Kafka Engine state: ${error.message}`,
+      );
     }
   }
 }
