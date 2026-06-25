@@ -26,6 +26,19 @@ class FakeRedis {
     mockKv.set(key, value);
     return Promise.resolve();
   }
+  // EVO-1896: SET key value EX <ttl> NX → 'OK' when set, null when key exists.
+  set(
+    key: string,
+    value: string,
+    ..._opts: unknown[]
+  ): Promise<string | null> {
+    const isNx = _opts.includes('NX');
+    if (isNx && mockKv.has(key)) {
+      return Promise.resolve(null);
+    }
+    mockKv.set(key, value);
+    return Promise.resolve('OK');
+  }
   mget(keys: string[]): Promise<(string | null)[]> {
     return Promise.resolve(keys.map((k) => mockKv.get(k) ?? null));
   }
@@ -222,5 +235,61 @@ describe('JourneySessionCacheService — Postgres write-through durability (EVO-
     const service = makeService(repo);
 
     await expect(service.set(makeSession('sess-3'))).rejects.toThrow('db down');
+  });
+});
+
+describe('JourneySessionCacheService — trigger idempotency (EVO-1896)', () => {
+  beforeEach(() => {
+    mockKv.clear();
+    mockSets.clear();
+    jest.clearAllMocks();
+  });
+
+  it('claims a (journey, contact, messageId) the first time it is seen', async () => {
+    const service = makeService(makeRepository());
+
+    const first = await service.tryClaimTriggerMessage('j1', 'c1', 'm1');
+
+    expect(first).toBe(true);
+    expect(
+      mockKv.has('evo-campaign:journey:dedup:j1:c1:m1'),
+    ).toBe(true);
+  });
+
+  it('refuses a redelivered messageId (atomic SET NX returns null)', async () => {
+    const service = makeService(makeRepository());
+
+    const first = await service.tryClaimTriggerMessage('j1', 'c1', 'm1');
+    const replay = await service.tryClaimTriggerMessage('j1', 'c1', 'm1');
+
+    expect(first).toBe(true);
+    expect(replay).toBe(false);
+  });
+
+  it('does not cross-block distinct journeys/contacts/messageIds', async () => {
+    const service = makeService(makeRepository());
+
+    await service.tryClaimTriggerMessage('j1', 'c1', 'm1');
+
+    await expect(
+      service.tryClaimTriggerMessage('j2', 'c1', 'm1'),
+    ).resolves.toBe(true);
+    await expect(
+      service.tryClaimTriggerMessage('j1', 'c2', 'm1'),
+    ).resolves.toBe(true);
+    await expect(
+      service.tryClaimTriggerMessage('j1', 'c1', 'm2'),
+    ).resolves.toBe(true);
+  });
+
+  it('fails open (allows execution) when Redis errors', async () => {
+    const service = makeService(makeRepository());
+    jest
+      .spyOn(service as any, 'ensureRedisConnected')
+      .mockRejectedValueOnce(new Error('redis down'));
+
+    await expect(
+      service.tryClaimTriggerMessage('j1', 'c1', 'm1'),
+    ).resolves.toBe(true);
   });
 });

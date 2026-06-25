@@ -287,6 +287,65 @@ export class JourneySessionCacheService extends BaseCacheService<
     return query.getMany();
   }
 
+  // EVO-1896: idempotency guard keyed by (journey, contact, messageId).
+  //
+  // The EVO-1691 active/waiting-session guard only blocks *concurrent*
+  // re-entry into the same journey; once a session reaches a terminal state
+  // (completed/failed) it no longer blocks. Kafka delivers at-least-once, so a
+  // redelivery of the SAME trigger event after the first run has finished slips
+  // past that guard and starts a second session — running every side effect
+  // (messages, pipeline moves, …) twice. We dedup on the messageId, which is
+  // the producer-stable identity of a trigger event, so a replay of the exact
+  // same event is dropped while genuinely distinct events (different messageId)
+  // still start fresh runs.
+  //
+  // The check is a single atomic `SET key flag NX EX ttl`: NX makes the very
+  // first caller win even under concurrent redelivery across consumers/replicas
+  // (it's a CAS, not a read-then-write), and the TTL bounds the dedup window so
+  // the keyspace self-cleans. Returns true when THIS call claimed the messageId
+  // (i.e. it is the first to process it → proceed with startJourney), false
+  // when it was already claimed (→ skip, it's a replay).
+  private buildDedupKey(
+    journeyId: string,
+    contactId: string,
+    messageId: string,
+  ): string {
+    return `evo-campaign:journey:dedup:${journeyId}:${contactId}:${messageId}`;
+  }
+
+  /**
+   * Atomically claim a trigger (journey, contact, messageId) for execution.
+   * - Returns `true` if this is the first time we see the messageId for this
+   *   journey/contact → caller should proceed with startJourney.
+   * - Returns `false` if it was already claimed within the TTL window → caller
+   *   should skip (Kafka at-least-once replay / retry).
+   *
+   * Fail-open: if Redis is unavailable we return `true` so a transient cache
+   * outage never silently swallows legitimate triggers — at worst we lose the
+   * dedup protection for that window, which degrades back to today's behaviour
+   * rather than dropping the journey entirely.
+   */
+  async tryClaimTriggerMessage(
+    journeyId: string,
+    contactId: string,
+    messageId: string,
+    ttlSeconds: number = 24 * 60 * 60,
+  ): Promise<boolean> {
+    try {
+      await this.ensureRedisConnected();
+      const key = this.buildDedupKey(journeyId, contactId, messageId);
+      // ioredis: SET key value EX <ttl> NX → returns 'OK' if set, null if it
+      // already existed. Atomic compare-and-set, safe under concurrency.
+      const result = await this.redis.set(key, '1', 'EX', ttlSeconds, 'NX');
+      return result === 'OK';
+    } catch (error) {
+      this.logger.warn(
+        `Trigger dedup check failed for journey ${journeyId} contact ${contactId} message ${messageId}, allowing execution: ${error.message}`,
+      );
+      return true;
+    }
+  }
+
   // Waiting index helpers (Redis set per contact)
   private buildWaitingIndexKey(contactId: string): string {
     return `evo-campaign:journey-session:waiting:${contactId}`;
