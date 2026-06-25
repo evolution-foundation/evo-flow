@@ -156,6 +156,13 @@ export interface ActionNodeActivities {
     nodeData: any;
     waitResult: 'success' | 'timeout' | 'cancelled';
   }): Promise<string | undefined>;
+  resolveWaitHandle(input: {
+    nodeId: string;
+    contactId: string;
+    sessionId: string;
+    nodeData: any;
+    waitResult: 'success' | 'timeout' | 'cancelled';
+  }): Promise<string | undefined>;
 }
 
 // Node instances for modular execution - using lazy initialization to avoid Temporal context issues
@@ -570,6 +577,29 @@ export const actionNodeActivities: ActionNodeActivities = {
     );
     // Convert null to undefined
     return Promise.resolve(result || undefined);
+  },
+
+  resolveWaitHandle(input: {
+    nodeId: string;
+    contactId: string;
+    sessionId: string;
+    nodeData: any;
+    waitResult: 'success' | 'timeout' | 'cancelled';
+  }): Promise<string | undefined> {
+    // Map the wait result to the FE outgoing-edge handle
+    // (wait-success / wait-otherwise) so the workflow can route the next node
+    // by edge.sourceHandle, just like conditional/split nodes.
+    const handle = WaitNode.resolveWaitHandle(
+      {
+        nodeId: input.nodeId,
+        contactId: input.contactId,
+        sessionId: input.sessionId,
+        nodeData: input.nodeData,
+      },
+      input.waitResult,
+    );
+    // Convert null to undefined (single-output waits → no handle)
+    return Promise.resolve(handle || undefined);
   },
 };
 
