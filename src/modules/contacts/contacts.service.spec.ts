@@ -22,8 +22,20 @@ describe('ContactsService (thin facade)', () => {
 
       const result = await service.findById('abc');
 
-      expect(client.findById).toHaveBeenCalledWith('abc');
+      // EVO-1919: findById now forwards an optional RequestOptions arg
+      // (undefined here) so callers can request a no-cache read for effect
+      // verification.
+      expect(client.findById).toHaveBeenCalledWith('abc', undefined);
       expect(result).toBe(expected);
+    });
+
+    it('EVO-1919: forwards RequestOptions (e.g. noCache) to the client', async () => {
+      const expected = { id: 'abc' } as any;
+      client.findById.mockResolvedValueOnce(expected);
+
+      await service.findById('abc', { noCache: true });
+
+      expect(client.findById).toHaveBeenCalledWith('abc', { noCache: true });
     });
 
     it('returns null when client returns null (404 passthrough)', async () => {

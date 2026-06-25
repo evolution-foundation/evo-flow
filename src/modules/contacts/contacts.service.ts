@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ContactsClientService } from '../../shared/crm-client/contacts-client.service';
 import type { ContactDto } from '../../shared/crm-client/types/contact';
+import type { RequestOptions } from '../../shared/crm-client/types/responses';
 
 /**
  * Thin ContactsService — facade over `ContactsClientService` (CRM Rails).
@@ -21,9 +22,12 @@ export class ContactsService {
 
   constructor(private readonly contactsClient: ContactsClientService) {}
 
-  async findById(id: string): Promise<ContactDto | null> {
+  async findById(
+    id: string,
+    opts?: RequestOptions,
+  ): Promise<ContactDto | null> {
     this.logger.debug(`findById(${id})`);
-    return this.contactsClient.findById(id);
+    return this.contactsClient.findById(id, opts);
   }
 
   async addLabel(contactId: string, labelId: string): Promise<void> {
