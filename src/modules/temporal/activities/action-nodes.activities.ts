@@ -40,7 +40,10 @@ import { ResolveConversationNode, ResolveConversationNodeInput } from './nodes/e
 import { SnoozeConversationNode, SnoozeConversationNodeInput } from './nodes/evoai/conversation/snooze-conversation.node';
 import { ChangePriorityNode, ChangePriorityNodeInput } from './nodes/evoai/conversation/change-priority.node';
 import { ScheduledActionNode, ScheduledActionNodeInput } from './nodes/scheduled-action.node';
-import { calculateWaitTimes } from '../utils/wait-time.util';
+import {
+  calculateWaitTimes,
+  resolveWaitTimeoutMs,
+} from '../utils/wait-time.util';
 
 // Re-export interfaces for backward compatibility
 export {
@@ -392,17 +395,17 @@ export const actionNodeActivities: ActionNodeActivities = {
     try {
       // Calculate wait times based on configuration
       const waitTimes = calculateWaitTimes(input.nodeData.waitType, input.nodeData);
-      
+      // Single source of truth for the timer the workflow schedules. For a pure
+      // 'time' wait this is the remaining ms until expectedCompleteAt; the
+      // workflow sleeps this long, then resumes (EVO-1931).
+      const fallbackTimeoutMs = resolveWaitTimeoutMs(waitTimes);
+
       log.info('🚨 DEBUG: Wait times calculated', {
         nodeId: input.nodeId,
         waitType: input.nodeData.waitType,
         expectedCompleteAt: waitTimes.expectedCompleteAt?.toISOString(),
         fallbackAt: waitTimes.fallbackAt?.toISOString(),
-        fallbackTimeoutMs: waitTimes.fallbackAt 
-          ? waitTimes.fallbackAt.getTime() - Date.now() 
-          : waitTimes.expectedCompleteAt 
-            ? waitTimes.expectedCompleteAt.getTime() - Date.now()
-            : undefined,
+        fallbackTimeoutMs,
       });
       
       // Update session status to WAITING in database
@@ -434,11 +437,7 @@ export const actionNodeActivities: ActionNodeActivities = {
           expectedCompleteAt: waitTimes.expectedCompleteAt?.toISOString(),
           fallbackAt: waitTimes.fallbackAt?.toISOString(),
           // Use fallbackAt for 'event' and 'condition' types, expectedCompleteAt for 'time' and 'time_or_condition'
-          fallbackTimeoutMs: waitTimes.fallbackAt 
-            ? waitTimes.fallbackAt.getTime() - Date.now() 
-            : waitTimes.expectedCompleteAt 
-              ? waitTimes.expectedCompleteAt.getTime() - Date.now()
-              : undefined,
+          fallbackTimeoutMs,
         },
       };
     } catch (error: any) {

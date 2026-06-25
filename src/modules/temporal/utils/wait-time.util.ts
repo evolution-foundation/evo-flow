@@ -11,6 +11,39 @@ export function convertToMs(value: number, unit: string): number {
   }
 }
 
+/**
+ * Compute how many milliseconds remain until a wait should auto-complete.
+ *
+ * For pure-time waits (`waitType === 'time'`) there is no `fallbackAt`, so the
+ * deadline is `expectedCompleteAt`; for event/condition waits with a fallback
+ * the deadline is `fallbackAt`. Returns `undefined` when no timer applies
+ * (e.g. an event wait with no fallback → waits indefinitely for a signal).
+ *
+ * This mirrors the `fallbackTimeoutMs` the wait activity hands to the workflow
+ * and is the single source of truth the workflow uses to schedule the Temporal
+ * `sleep` for time-based resume (EVO-1931).
+ */
+export function resolveWaitTimeoutMs(
+  times: { expectedCompleteAt?: Date; fallbackAt?: Date },
+  now: number = Date.now(),
+): number | undefined {
+  const deadline = times.fallbackAt ?? times.expectedCompleteAt;
+  if (!deadline) {
+    return undefined;
+  }
+  return deadline.getTime() - now;
+}
+
+/**
+ * Whether a wait is a "pure time" wait whose resume is driven by a Temporal
+ * `sleep(ms)` rather than by an external completion signal. The workflow keys
+ * its scheduling branch off `metadata.waitType === 'time'`; keeping the test
+ * pointed at this predicate guards the time-based resume path (EVO-1931).
+ */
+export function isPureTimeWait(waitType: string | undefined): boolean {
+  return waitType === 'time';
+}
+
 export function calculateWaitTimes(
   waitType: string,
   config: any,
