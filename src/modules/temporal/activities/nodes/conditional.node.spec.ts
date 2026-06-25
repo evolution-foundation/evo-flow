@@ -339,6 +339,55 @@ describe('ConditionalNode — {{contact.customAttributes.*}}', () => {
     expect((result as any).nextNodeHandle).toBe('p1');
   });
 
+  it('skips the CRM contact round-trip when conditions only read session variables', async () => {
+    const loadSpy = jest.spyOn(node as any, 'loadContactData');
+    jest
+      .spyOn(node as any, 'loadSessionVariables')
+      .mockResolvedValue({ tier: 'gold' });
+
+    const variableOnlyInput: ConditionalNodeInput = {
+      nodeId: 'n1',
+      contactId: 'c1',
+      sessionId: 's1',
+      nodeData: {
+        paths: [
+          {
+            id: 'p1',
+            name: 'Variable path',
+            conditions: [
+              {
+                id: 'cond-1',
+                type: 'custom',
+                field: '{{tier}}',
+                operator: 'equals',
+                value: 'gold',
+              },
+            ],
+            logicalOperator: 'AND',
+          },
+        ],
+      },
+    };
+
+    const result = await node.execute(variableOnlyInput);
+
+    expect(loadSpy).not.toHaveBeenCalled();
+    expect((result as any).nextNodeHandle).toBe('p1');
+  });
+
+  it('still loads the contact for a type:contact condition selected by name only', async () => {
+    const loadSpy = jest.spyOn(node as any, 'loadContactData');
+
+    // `field` is a bare contact attribute name (no {{contact.*}} wrapper), so
+    // gating must fall back to `type: 'contact'` to know it needs the contact.
+    const result = await node.execute(
+      inputWith('email', 'equals', 'a@b.com', 'contact'),
+    );
+
+    expect(loadSpy).toHaveBeenCalled();
+    expect((result as any).nextNodeHandle).toBe('p1');
+  });
+
   it('routing: contact-attribute field on a non-contact-typed condition still matches', async () => {
     // Proves the pre-switch {{contact.*}} handling — not the `type` switch —
     // drives contact resolution. The picker is shared across condition types,

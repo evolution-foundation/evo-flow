@@ -66,8 +66,23 @@ export class ConditionalNode extends BaseNode {
         throw new Error('No conditional paths configured');
       }
 
-      // Load contact data for evaluation
-      const contactData = await this.loadContactData(input.contactId);
+      // Load contact data only when a condition actually needs the contact —
+      // either a {{contact.*}} field (resolved by field pattern regardless of
+      // type, mirroring evaluateCondition) or a `type: 'contact'` condition.
+      // Avoids a CRM round-trip on Conditional nodes that only read session
+      // variables. Empty object when out of scope: resolveContactField then
+      // returns undefined for every field, the correct "no match" signal.
+      const needsContactData = paths.some((path) =>
+        (path.conditions || []).some(
+          (condition) =>
+            condition?.type === 'contact' ||
+            (typeof condition?.field === 'string' &&
+              CONTACT_FIELD_PATTERN.test(condition.field)),
+        ),
+      );
+      const contactData = needsContactData
+        ? await this.loadContactData(input.contactId)
+        : {};
 
       // Load conversation data only when a path actually references a
       // {{conversation.*}} field — avoids a CRM round-trip on every Conditional
