@@ -1037,6 +1037,80 @@ export class CrmClientService {
   }
 
   // ============================================================================
+  // Effect verification (EVO-1919 hardening — defense in depth vs D8/D11)
+  // ============================================================================
+
+  /**
+   * Whether journey write-nodes should re-read the resource after a 2xx write
+   * to confirm the effect actually persisted (defends against CRM endpoints
+   * that answer 200 without persisting — D8 labels, D11 set_agent_bot).
+   * Controlled by `EVOAI_JOURNEY_VERIFY_EFFECT` (default true).
+   */
+  isEffectVerificationEnabled(): boolean {
+    return getCrmClientConfig().journeyVerifyEffect;
+  }
+
+  /**
+   * Reusable "verify effect" wrapper for write-nodes. After a write that
+   * returned a 2xx, the caller passes a `probe` that re-reads the resource and
+   * a `confirm` predicate that decides whether the effect is present in the
+   * re-read state.
+   *
+   * Returns a discriminated result:
+   *  - `{ verified: true,  confirmed }`  — the probe ran; `confirmed` reflects
+   *    whether the effect persisted (caller fails the node when false).
+   *  - `{ verified: false }`             — verification was skipped (disabled
+   *    via flag) OR the probe itself failed (network/timeout/breaker). We do
+   *    NOT fail the node on a flaky read — the write already returned 2xx, so a
+   *    re-read failure is treated as "cannot confirm" rather than "did not
+   *    persist", avoiding false negatives. The reason is logged.
+   *
+   * The probe is a single cheap GET; 4xx/404 during the probe are classified
+   * as client responses by the generic path and do NOT open the circuit
+   * breaker (EVO-1918), so verification never trips resilience.
+   */
+  async verifyEffect<T>(
+    context: { nodeType: string; resourceId: string },
+    probe: () => Promise<T>,
+    confirm: (state: T) => boolean,
+  ): Promise<{ verified: true; confirmed: boolean } | { verified: false }> {
+    if (!this.isEffectVerificationEnabled()) {
+      return { verified: false };
+    }
+
+    let state: T;
+    try {
+      state = await probe();
+    } catch (error) {
+      // Re-read failed (network/timeout/circuit). Don't fail the node on a
+      // flaky probe — the write itself already succeeded (2xx).
+      CrmClientService.logger.warn(
+        `Effect verification probe failed; cannot confirm effect ${JSON.stringify(
+          {
+            nodeType: context.nodeType,
+            resourceId: context.resourceId,
+            error: error instanceof Error ? error.message : String(error),
+          },
+        )}`,
+      );
+      return { verified: false };
+    }
+
+    const confirmed = confirm(state);
+    if (!confirmed) {
+      CrmClientService.logger.warn(
+        `Effect verification FAILED: CRM returned 2xx but the change did not persist ${JSON.stringify(
+          {
+            nodeType: context.nodeType,
+            resourceId: context.resourceId,
+          },
+        )}`,
+      );
+    }
+    return { verified: true, confirmed };
+  }
+
+  // ============================================================================
   // Test/diagnostic helpers
   // ============================================================================
 
