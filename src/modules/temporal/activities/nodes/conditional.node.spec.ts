@@ -1,5 +1,12 @@
 import { ConditionalNode, ConditionalNodeInput } from './conditional.node';
 
+// logNodeError() calls @temporalio/activity's `log`, which throws outside an
+// activity context. Stub it so the node's error path (exercised by EVO-1913)
+// runs without a live Temporal worker.
+jest.mock('@temporalio/activity', () => ({
+  log: { error: jest.fn(), warn: jest.fn(), info: jest.fn(), debug: jest.fn() },
+}));
+
 const mockGetConversation = jest.fn();
 jest.mock('../../../../shared/crm-client/crm-client.service', () => ({
   CrmClientService: jest.fn().mockImplementation(() => ({
@@ -402,5 +409,83 @@ describe('ConditionalNode — {{contact.customAttributes.*}}', () => {
     );
 
     expect((result as any).nextNodeHandle).toBe('p1');
+  });
+});
+
+describe('ConditionalNode — EVO-1913: surfaces swallowed hydration errors', () => {
+  let node: ConditionalNode;
+  let errorSpy: jest.SpyInstance;
+
+  const contactInput = (): ConditionalNodeInput => ({
+    nodeId: 'n1',
+    contactId: 'c1',
+    sessionId: 's1',
+    nodeData: {
+      paths: [
+        {
+          id: 'p1',
+          name: 'Contact attr path',
+          conditions: [
+            {
+              id: 'cond-1',
+              type: 'contact',
+              field: '{{contact.customAttributes.plan_interest}}',
+              operator: 'equals' as any,
+              value: 'Enterprise',
+            },
+          ],
+          logicalOperator: 'AND',
+        },
+      ],
+    },
+  });
+
+  beforeEach(() => {
+    node = new ConditionalNode();
+
+    jest
+      .spyOn(node as any, 'selectiveInterpolateNodeData')
+      .mockImplementation(async (_input, nodeData) => nodeData);
+    jest.spyOn(node as any, 'loadSessionVariables').mockResolvedValue({});
+
+    jest.spyOn((node as any).logger, 'log').mockImplementation(() => undefined);
+    jest
+      .spyOn((node as any).logger, 'warn')
+      .mockImplementation(() => undefined);
+    errorSpy = jest
+      .spyOn((node as any).logger, 'error')
+      .mockImplementation(() => undefined);
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  it('a CRM hydration failure fails the node (NOT a silent route to ELSE) and logs ERROR', async () => {
+    jest
+      .spyOn(node as any, 'loadContactData')
+      .mockRejectedValue(new Error('CRM unavailable'));
+
+    const result = await node.execute(contactInput());
+
+    // Previously this swallowed to {} → every contact-attr condition false →
+    // nextNodeHandle 'else' with success:true. Now it must surface as a failure.
+    expect(result.success).toBe(false);
+    expect((result as any).nextNodeHandle).not.toBe('else');
+    expect((result as any).error).toContain('CRM unavailable');
+  });
+
+  it('loadContactData re-throws with an ERROR log on a CRM/import failure', async () => {
+    // The dynamic CrmClientService import is mocked (top-of-file) to a client
+    // without findById; ContactsClientService.findById therefore throws,
+    // exercising the catch branch.
+    await expect(
+      (node as any).loadContactData('c1'),
+    ).rejects.toThrow(/Failed to load contact data/);
+
+    expect(errorSpy).toHaveBeenCalledWith(
+      'Failed to load contact data for condition evaluation',
+      expect.objectContaining({ contactId: 'c1' }),
+    );
   });
 });

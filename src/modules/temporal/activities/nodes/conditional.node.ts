@@ -626,13 +626,20 @@ export class ConditionalNode extends BaseNode {
 
       const client = new ContactsClientService(new CrmClientService());
       const dto = await client.findById(contactId);
+      // A successful fetch may legitimately carry no attributes — that empty
+      // mapping is a valid "no match" signal and must NOT be treated as failure.
       return mapContactDto(dto) || {};
     } catch (error: any) {
-      this.logger.warn('Failed to load contact data', {
+      // EVO-1913: a CRM/hydration failure is NOT the same as "contact has no
+      // such attribute". Swallowing it as `{}` made every contact-attribute
+      // condition evaluate false → silent route to ELSE with no error. Surface
+      // it instead: log ERROR and re-throw so the node fails visibly (the
+      // executor records node_failed + telemetry) rather than mis-routing.
+      this.logger.error('Failed to load contact data for condition evaluation', {
         contactId,
         error: error.message,
       });
-      return {};
+      throw new Error(`Failed to load contact data: ${error.message}`);
     }
   }
 
@@ -657,7 +664,11 @@ export class ConditionalNode extends BaseNode {
       // (with pipelines) sits one level deeper at response.data.data.
       return response?.data?.data ?? null;
     } catch (error: any) {
-      this.logger.warn('Failed to load conversation data', {
+      // EVO-1913: a request failure here is not a benign "no conversation in
+      // scope" (that case returns early above with no error). Make the failure
+      // visible at ERROR level; we still degrade to null so a contact-triggered
+      // journey keeps evaluating, but the cause is no longer invisible.
+      this.logger.error('Failed to load conversation data', {
         conversationId,
         error: error.message,
       });
@@ -684,7 +695,11 @@ export class ConditionalNode extends BaseNode {
 
       return session?.variables || {};
     } catch (error: any) {
-      this.logger.warn('Failed to load session variables', {
+      // EVO-1913: surface the failure at ERROR level instead of swallowing it
+      // as an empty bag silently (which made {{session var}} conditions all
+      // evaluate false with no trace). Degrade to {} so evaluation continues,
+      // but the cause is now visible in the logs.
+      this.logger.error('Failed to load session variables', {
         sessionId,
         error: error.message,
       });
