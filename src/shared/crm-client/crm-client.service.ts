@@ -34,6 +34,33 @@ export interface CrmConversationContext {
 }
 
 /**
+ * Internal sentinel thrown by the breaker-wrapped operation ONLY for failures
+ * that represent CRM *unavailability* (5xx, network, timeout, rate-limit after
+ * exhausting retries). It carries the terminal `reason` so the outer handler
+ * can build the rich exception without leaking transport details.
+ *
+ * Why a dedicated error type (EVO-1918): the circuit breaker counts every
+ * throw out of `execute()` as a failure. Business-level non-availability
+ * responses — 404 (contact not found) and the rest of the 4xx class except
+ * 408/429 — must NOT open the breaker: they mean "the CRM is healthy and
+ * answered, the resource just isn't there / the request was bad". Those
+ * responses are returned from the operation (never thrown), so the breaker
+ * sees a success. Only `CrmBreakingError` ever escapes the operation, which
+ * makes the "404 doesn't break the circuit" contract enforced by construction
+ * rather than an emergent side effect of which branch happens to `return`.
+ */
+class CrmBreakingError extends Error {
+  constructor(
+    readonly terminalReason: ContactsClientTerminalReason,
+    readonly statusCode?: number,
+    message?: string,
+  ) {
+    super(message ?? `CRM breaking failure (${terminalReason})`);
+    this.name = 'CrmBreakingError';
+  }
+}
+
+/**
  * Wire shape of `template_params` accepted by the CRM messages endpoint
  * (Messages::MessageBuilder#process_template_content): the CRM resolves the
  * template by name+language on the conversation's channel and re-renders the
@@ -65,6 +92,13 @@ export interface CrmMessageTemplateParams {
  * Circuit breaker: class-level static instance, threshold=5 consecutive
  * failures, recovery=60s. State shared across all `new CrmClientService()`
  * instantiations and DI-managed singletons.
+ *
+ * Only CRM *unavailability* counts toward the breaker (EVO-1918): 5xx, network
+ * errors, client-side timeouts, and rate-limit-after-retries. Business-level
+ * responses — 404 (resource not found) and the rest of the 4xx class except
+ * 408/429 — are routed AROUND the breaker (returned, never thrown from the
+ * wrapped operation), so a burst of 404s for unsynced contacts cannot open the
+ * circuit and cascade `unavailable` onto valid contacts.
  *
  * Generic-path hardening (EVO-1205): the generic get/post/patch/delete methods
  * enforce a 5s timeout and retry 5xx/network/429 up to 3 times with backoff
@@ -184,14 +218,16 @@ export class CrmClientService {
    * Core generic dispatcher with cache + circuit + status mapping.
    *
    * Uses `circuitBreaker.execute()` only around the transport call so that:
-   *  - 5xx and network failures count toward the failure threshold.
-   *  - Client-classified responses (401, 404, 422, terminal 4xx) are routed
-   *    AROUND the breaker by inspecting `response` *after* `execute()` returns.
+   *  - 5xx, network, timeout and rate-limit-after-retries count toward the
+   *    failure threshold (they throw a `CrmBreakingError` out of the operation).
+   *  - Client-classified responses (401, 403, 404, 408, 422, other 4xx) are
+   *    routed AROUND the breaker: the operation RETURNS them, so the breaker
+   *    records a success and they are interpreted in Phase 2 (EVO-1918).
    *
-   * The trick: `execute()`'s wrapped operation only throws on transport or
-   * 5xx errors. Other non-OK statuses are returned to the outer function via
-   * a normal `{response}` result so the breaker sees them as success
-   * (server is healthy, just responding with a client error).
+   * The breaking/non-breaking split is enforced by construction: the wrapped
+   * operation throws ONLY `CrmBreakingError`; every other status falls through
+   * to `return attemptResponse`. This is what guarantees a 404 storm (unsynced
+   * contacts) can never open the circuit.
    */
   private async requestGeneric<T>(
     method: 'GET' | 'POST' | 'PATCH' | 'DELETE',
@@ -252,13 +288,23 @@ export class CrmClientService {
     let terminalReason: ContactsClientTerminalReason = 'network';
 
     // Phase 1: transport + 5xx + retry loop, wrapped in the circuit breaker.
-    // Returns the final Response (client-classified or success), or throws
-    // a transport/5xx Error that the breaker counts.
+    //
+    // Breaker contract (EVO-1918): the operation returns the final Response for
+    // every *non-breaking* outcome — 2xx AND the whole 4xx class except 408/429
+    // (404 contact-not-found, 401, 422, other client errors). Those are routed
+    // around the breaker so a storm of 404s for unsynced contacts can NEVER
+    // trip it and cascade `unavailable` onto valid contacts.
+    //
+    // It throws `CrmBreakingError` — and only that — for outcomes that mean the
+    // CRM is unavailable (5xx, network, timeout, rate-limit after exhausting
+    // retries). Those are the sole failures the breaker counts.
     let response: Response;
     try {
       response = await CrmClientService.circuitBreaker.execute<Response>(
         async () => {
-          let lastTransportError: Error = new Error('Unknown error');
+          let lastBreakingError: CrmBreakingError = new CrmBreakingError(
+            'network',
+          );
 
           // attempt 0 = initial try; attempts 1..maxRetries = retries.
           for (let attempt = 0; attempt <= maxRetries; attempt++) {
@@ -277,8 +323,12 @@ export class CrmClientService {
             } catch (networkErr: any) {
               clearTimeout(timeoutId);
               const isTimeout = networkErr?.name === 'AbortError';
-              lastTransportError = networkErr;
               terminalReason = isTimeout ? 'timeout' : 'network';
+              lastBreakingError = new CrmBreakingError(
+                terminalReason,
+                undefined,
+                networkErr?.message ?? String(networkErr),
+              );
               if (isTimeout) contactsClientMetrics.incTimeout();
               CrmClientService.logger.error(
                 `CRM API ${isTimeout ? 'timeout' : 'network failure'} [Attempt ${
@@ -299,7 +349,7 @@ export class CrmClientService {
                 );
                 continue;
               }
-              throw networkErr;
+              throw lastBreakingError;
             }
             clearTimeout(timeoutId);
 
@@ -307,7 +357,9 @@ export class CrmClientService {
             if (attemptResponse.status >= 500) {
               lastStatusCode = attemptResponse.status;
               terminalReason = 'server_error';
-              lastTransportError = new Error(
+              lastBreakingError = new CrmBreakingError(
+                'server_error',
+                attemptResponse.status,
                 `CRM service error (${attemptResponse.status})`,
               );
               if (attempt < maxRetries) {
@@ -317,7 +369,7 @@ export class CrmClientService {
                 );
                 continue;
               }
-              throw lastTransportError;
+              throw lastBreakingError;
             }
 
             // 429 → respect Retry-After; if exhausted, treat as transport failure.
@@ -349,19 +401,38 @@ export class CrmClientService {
                 await new Promise((resolve) => setTimeout(resolve, waitTime));
                 continue;
               }
-              throw new Error('CRM rate limit exceeded after retries');
+              throw new CrmBreakingError(
+                'rate_limited',
+                429,
+                'CRM rate limit exceeded after retries',
+              );
             }
 
-            // Anything else (2xx, 401, 404, 422, other 4xx) → return response to caller.
+            // Anything else (2xx, 401, 403, 404, 408, 422, other 4xx) → return
+            // response to caller. Non-breaking by construction: the breaker sees
+            // a success, so these never count toward the failure threshold
+            // (EVO-1918). 408 (Request Timeout) is treated as a normal response
+            // here — only client-side AbortController timeouts (above) are
+            // breaking. Phase 2 maps each status to the right exception/value.
             return attemptResponse;
           }
 
-          throw lastTransportError;
+          throw lastBreakingError;
         },
       );
-    } catch {
+    } catch (err) {
       // Network / timeout / 5xx / rate-limit-exhausted / circuit OPEN — the CRM
       // is unavailable after the full retry budget. Surface the rich exception.
+      //
+      // Defensive invariant (EVO-1918): only `CrmBreakingError` and the
+      // breaker's own "circuit OPEN" rejection should land here. Any other
+      // throw would be a bug (a non-breaking branch leaking an error); we still
+      // classify it as a terminal failure but keep `terminalReason` derived
+      // from the breaking error when available so 4xx can never be miscounted.
+      if (err instanceof CrmBreakingError) {
+        terminalReason = err.terminalReason;
+        if (err.statusCode !== undefined) lastStatusCode = err.statusCode;
+      }
       contactsClientMetrics.incTerminalFailure(terminalReason);
       throw new ContactsClientUnavailableException({
         correlationId: readCorrelationIdFromCls(),
