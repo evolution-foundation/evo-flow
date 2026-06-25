@@ -293,3 +293,76 @@ describe('JourneySessionCacheService — trigger idempotency (EVO-1896)', () => 
     ).resolves.toBe(true);
   });
 });
+
+describe('JourneySessionCacheService — best-effort persistence on start path (EVO-1892)', () => {
+  beforeEach(() => {
+    mockKv.clear();
+    mockSets.clear();
+    jest.clearAllMocks();
+  });
+
+  it('does NOT throw when Postgres FK write fails and bestEffortPersist is set', async () => {
+    const repo = makeRepository();
+    // The contact is absent from evo_campaign.contacts → FK violation.
+    repo.save.mockRejectedValue(
+      new Error(
+        'insert or update on table "journey_sessions" violates foreign key constraint "FK_journey_sessions_contact_id"',
+      ),
+    );
+    const service = makeService(repo);
+
+    await expect(
+      service.set(makeSession('sess-be'), { bestEffortPersist: true }),
+    ).resolves.toBeUndefined();
+
+    // The session is still written to the shared Redis layer, so the runtime
+    // (and the EVO-1691 guard's getSessionsByContact) can read it — the workflow
+    // can advance off the cache despite the failed Postgres write.
+    expect(mockKv.has('evo-campaign:journey-session:sess-be')).toBe(true);
+  });
+
+  it('still throws by default (durable write-through unchanged for other paths)', async () => {
+    const repo = makeRepository();
+    repo.save.mockRejectedValueOnce(new Error('db down'));
+    const service = makeService(repo);
+
+    await expect(service.set(makeSession('sess-d'))).rejects.toThrow('db down');
+  });
+
+  it('updateSessionStatus stays best-effort end-to-end when asked (no throw on FK)', async () => {
+    const repo = makeRepository();
+    const service = makeService(repo);
+
+    // Seed the session into the cache (best-effort create succeeded in Redis).
+    await service.set(makeSession('sess-up'), { bestEffortPersist: true });
+    // Now the contact is still absent → every subsequent Postgres write FK-fails.
+    repo.save.mockRejectedValue(
+      new Error('violates foreign key constraint "FK_journey_sessions_contact_id"'),
+    );
+
+    await expect(
+      service.updateSessionStatus(
+        'sess-up',
+        'active',
+        { workflowId: 'wf-1', workflowRunId: 'run-1' },
+        { bestEffortPersist: true },
+      ),
+    ).resolves.toBeUndefined();
+
+    const seen = await service.get('sess-up');
+    expect(seen?.status).toBe('active');
+    expect(seen?.workflowId).toBe('wf-1');
+  });
+
+  it('updateSessionStatus still throws on FK without the best-effort flag', async () => {
+    const repo = makeRepository();
+    const service = makeService(repo);
+
+    await service.set(makeSession('sess-up2'), { bestEffortPersist: true });
+    repo.save.mockRejectedValue(new Error('db down'));
+
+    await expect(
+      service.updateSessionStatus('sess-up2', 'completed'),
+    ).rejects.toThrow('db down');
+  });
+});

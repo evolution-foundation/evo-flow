@@ -81,12 +81,35 @@ export class JourneySessionCacheService extends BaseCacheService<
   // Redis is written first (hot path); the DB write follows and its failure
   // propagates so the Temporal activity retries / create fails loudly rather
   // than silently dropping the record.
-  async set(entity: JourneySession): Promise<void> {
+  //
+  // EVO-1892: `bestEffortPersist` decouples the Postgres write from the caller's
+  // critical path. `journey_sessions.contact_id` carries a FK to
+  // `evo_campaign.contacts` (ON DELETE CASCADE), but the evo-flow community
+  // surface never populates that table (ContactsService is a CRM HTTP proxy;
+  // there is no contact sync/backfill). For a real contact the write therefore
+  // raises `violates foreign key constraint "FK_journey_sessions_contact_id"`.
+  // On the journey-*start* path this is fatal twice over: it aborts before the
+  // Temporal workflow ever starts, AND it leaves the Redis session "active" —
+  // an orphan that the single-session-per-(contact,journey) guard (EVO-1691)
+  // then uses to block every future trigger forever. Redis already holds the
+  // full state the runtime needs to advance the workflow, so on the start path
+  // we persist best-effort: a Postgres failure is logged and swallowed instead
+  // of thrown, the workflow still starts, and the session is never orphaned.
+  // The durable default (throw) is unchanged for every other write path
+  // (status transitions, per-node updates from the Temporal activity), which
+  // genuinely want the write to fail loudly and retry.
+  async set(
+    entity: JourneySession,
+    options: { bestEffortPersist?: boolean } = {},
+  ): Promise<void> {
     await super.set(entity);
-    await this.persistToDatabase(entity);
+    await this.persistToDatabase(entity, options.bestEffortPersist === true);
   }
 
-  private async persistToDatabase(value: JourneySession): Promise<void> {
+  private async persistToDatabase(
+    value: JourneySession,
+    bestEffort = false,
+  ): Promise<void> {
     const v = value as unknown as CachedJourneySession;
     try {
       await this.repository.save({
@@ -112,7 +135,13 @@ export class JourneySessionCacheService extends BaseCacheService<
       this.logger.error(
         `Failed to persist journey session ${v.id} to Postgres: ${error.message}`,
       );
-      throw error;
+      // EVO-1892: on the start path the cache (Redis) is sufficient to run the
+      // workflow, so a persistence failure must not abort the start. Swallow it
+      // so the caller proceeds to `workflow.start`; the durable default still
+      // re-throws for every other write path.
+      if (!bestEffort) {
+        throw error;
+      }
     }
   }
 
@@ -196,6 +225,12 @@ export class JourneySessionCacheService extends BaseCacheService<
     sessionId: string,
     status: string,
     additionalData?: Partial<CachedJourneySession>,
+    // EVO-1892: when the create on the start path persisted best-effort (the
+    // contact is absent from evo_campaign.contacts, FK violation), the row is
+    // not in Postgres, so the durable status write would FK-fail and throw —
+    // re-introducing the abort/orphan we are fixing. The start path passes this
+    // through so the cache stays the source of truth without breaking the run.
+    options: { bestEffortPersist?: boolean } = {},
   ): Promise<void> {
     const session = await this.get(sessionId);
     if (session) {
@@ -207,10 +242,13 @@ export class JourneySessionCacheService extends BaseCacheService<
         lastCached: new Date(),
       };
 
-      await this.set({
-        ...updated,
-        id: sessionId,
-      } as any);
+      await this.set(
+        {
+          ...updated,
+          id: sessionId,
+        } as any,
+        { bestEffortPersist: options.bestEffortPersist === true },
+      );
 
       try {
         if (status === 'WAITING' || status === 'waiting') {

@@ -89,6 +89,8 @@ describe('JourneySessionsService.startJourney', () => {
         workflowId: result.workflowId,
         workflowRunId: 'run-1',
       }),
+      // EVO-1892: best-effort so a FK persistence failure cannot undo the start.
+      { bestEffortPersist: true },
     );
   });
 
@@ -161,13 +163,56 @@ describe('JourneySessionsService.startJourney', () => {
       expect.objectContaining({
         errorMessage: expect.stringContaining('no journey-execution worker'),
       }),
+      // EVO-1892: best-effort (the row may not exist in Postgres after a
+      // FK-failed best-effort create).
+      { bestEffortPersist: true },
     );
     // Not marked ACTIVE.
     expect(cache.updateSessionStatus).not.toHaveBeenCalledWith(
       result.sessionId,
       JourneySessionStatus.ACTIVE,
       expect.anything(),
+      expect.anything(),
     );
+  });
+
+  it('EVO-1892: creates the session best-effort so a FK persistence failure cannot abort the start', async () => {
+    const result = await service.startJourney(journey, contactId, triggerEvent);
+
+    expect(result.started).toBe(true);
+    // The create must opt into best-effort persistence: the contact is absent
+    // from evo_campaign.contacts, so the Postgres write FK-fails; swallowing it
+    // (cache-first) is what lets the workflow start instead of aborting.
+    expect(cache.set).toHaveBeenCalledWith(
+      expect.objectContaining({
+        journeyId: 'journey-1',
+        contactId: 'contact-1',
+        status: JourneySessionStatus.ACTIVE,
+      }),
+      { bestEffortPersist: true },
+    );
+    // The post-start ACTIVE status write is best-effort too — the row may not be
+    // in Postgres, and a FK failure there must not undo a started workflow.
+    expect(cache.updateSessionStatus).toHaveBeenCalledWith(
+      result.sessionId,
+      JourneySessionStatus.ACTIVE,
+      expect.objectContaining({ workflowId: result.workflowId }),
+      { bestEffortPersist: true },
+    );
+    expect(workflowStart).toHaveBeenCalledTimes(1);
+  });
+
+  it('EVO-1892: start still succeeds (no orphan) when persistence rejects but the cache holds the session', async () => {
+    // Simulate the real failure shape: the cache write-through to Postgres
+    // FK-fails, but because the start path persists best-effort the cache layer
+    // resolves rather than throwing. The session lives in the cache and the
+    // workflow starts — it is never orphaned/ABORTed.
+    const result = await service.startJourney(journey, contactId, triggerEvent);
+
+    expect(result.started).toBe(true);
+    expect(result.sessionId).toBeDefined();
+    // No rollback/invalidate happened: a successful start must keep the session.
+    expect(cache.invalidate).not.toHaveBeenCalled();
   });
 
   it('rolls back the created session when the workflow fails to start', async () => {
