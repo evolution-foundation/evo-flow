@@ -331,6 +331,130 @@ export class ClickHouseService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
+   * Guard a Kafka Engine table against a stale broker "frozen" by a previous boot.
+   *
+   * Kafka Engine tables created with `CREATE TABLE IF NOT EXISTS` "freeze" the
+   * broker string from the first boot. If that boot lacked KAFKA_BROKERS_INTERNAL
+   * the table is stuck on 'localhost:9092' forever — ClickHouse can't reach Kafka
+   * and the topic silently receives nothing (EVO-1893/EVO-1925). This reads the
+   * existing DDL, and if the broker diverges from `expectedBrokers`, drops the
+   * dependent materialized views and the Kafka table so the caller can recreate
+   * them with the right broker.
+   *
+   * @returns true if the table was dropped (stale), false if absent or already correct.
+   */
+  private async ensureKafkaEngineBroker(
+    databaseName: string,
+    tableName: string,
+    expectedBrokers: string,
+    dependentViews: string[] = [],
+  ): Promise<boolean> {
+    try {
+      const rows = await this.query<{ engine: string; create: string }>({
+        query: `
+          SELECT engine, create_table_query AS create
+          FROM system.tables
+          WHERE database = {database:String} AND name = {table:String}
+        `,
+        parameters: { database: databaseName, table: tableName },
+      });
+
+      const existing = rows?.[0];
+
+      // Table doesn't exist yet → nothing to fix, caller will create it fresh.
+      if (!existing) {
+        return false;
+      }
+
+      // Only Kafka Engine tables carry a frozen broker; anything else is left alone.
+      if (existing.engine !== 'Kafka') {
+        return false;
+      }
+
+      const currentBrokers = this.extractKafkaBrokers(existing.create);
+
+      if (currentBrokers === expectedBrokers) {
+        this.logger.log(
+          `Kafka Engine table '${databaseName}.${tableName}' already points at the configured broker ('${expectedBrokers}')`,
+        );
+        return false;
+      }
+
+      this.logger.warn(
+        `⚠️ Kafka Engine table '${databaseName}.${tableName}' is bound to a stale broker ` +
+          `('${currentBrokers ?? 'unknown'}') but the configured broker is '${expectedBrokers}'. ` +
+          `Recreating it so the pipeline reaches Kafka (EVO-1893/EVO-1925).`,
+      );
+
+      // Drop dependent materialized views first (they block dropping the source).
+      for (const view of dependentViews) {
+        await this.command({
+          query: `DROP VIEW IF EXISTS ${databaseName}.${view}`,
+        });
+        this.logger.log(`Dropped stale dependent view '${databaseName}.${view}'`);
+      }
+
+      await this.command({
+        query: `DROP TABLE IF EXISTS ${databaseName}.${tableName}`,
+      });
+      this.logger.log(
+        `Dropped stale Kafka Engine table '${databaseName}.${tableName}'`,
+      );
+
+      return true;
+    } catch (error) {
+      // Don't block boot on the validation itself; recreating is best-effort.
+      this.logger.error(
+        `Failed to validate broker for '${databaseName}.${tableName}': ${error.message}`,
+        error.stack,
+      );
+      return false;
+    }
+  }
+
+  /**
+   * Extract the broker list from a Kafka Engine DDL, e.g.
+   * `... ENGINE = Kafka('broker:9092', 'topic', ...)` → `broker:9092`.
+   */
+  private extractKafkaBrokers(createTableQuery: string): string | null {
+    const match = createTableQuery.match(/Kafka\(\s*'([^']*)'/i);
+    return match ? match[1] : null;
+  }
+
+  /**
+   * Log the broker the contact-events Kafka Engine table is actually bound to.
+   * The Kafka Engine consumes/produces in the background and does not raise to
+   * this Node process, so without this the only failure mode is a silently empty
+   * pipeline (EVO-1925).
+   */
+  private async logContactEventsKafkaState(
+    databaseName: string,
+    tableName: string,
+  ) {
+    try {
+      const rows = await this.query<{ create: string }>({
+        query: `
+          SELECT create_table_query AS create
+          FROM system.tables
+          WHERE database = {database:String} AND name = {table:String}
+        `,
+        parameters: { database: databaseName, table: `${tableName}_kafka_queue` },
+      });
+
+      const brokers = rows?.[0]
+        ? this.extractKafkaBrokers(rows[0].create)
+        : null;
+      this.logger.log(
+        `Contact-events Kafka Engine table '${databaseName}.${tableName}_kafka_queue' is bound to broker '${brokers ?? 'unknown'}'`,
+      );
+    } catch (error) {
+      this.logger.warn(
+        `Could not inspect contact-events Kafka Engine state: ${error.message}`,
+      );
+    }
+  }
+
+  /**
    * Create Kafka integration tables
    * This creates a Kafka Engine table that reads from Kafka
    * and a Materialized View that moves data to the main table
@@ -348,6 +472,21 @@ export class ClickHouseService implements OnModuleInit, OnModuleDestroy {
       const kafkaGroupId = `${this.config.kafka?.groupId || 'evo-campaign-consumers'}-clickhouse`;
 
       this.logger.log(`Using Kafka brokers for ClickHouse: ${kafkaBrokers}`);
+
+      // 0. Guard against a stale broker "frozen" by a previous boot (EVO-1925).
+      //    The Kafka table is created with `IF NOT EXISTS`, so if a first boot ran
+      //    without KAFKA_BROKERS_INTERNAL it baked in 'localhost:9092' and every
+      //    later boot keeps the wrong broker → ClickHouse can't reach Kafka, the
+      //    topic stays empty and contact_events ingestion silently stalls.
+      //    Detect divergence and DROP+recreate so the configured broker wins.
+      await this.ensureKafkaEngineBroker(
+        databaseName,
+        `${tableName}_kafka_queue`,
+        kafkaBrokers,
+        // The MV reads from the Kafka queue and writes into the main table; it
+        // must be dropped before the underlying Kafka table can be dropped.
+        [`${tableName}_kafka_mv`],
+      );
 
       // 1. Create Kafka queue table
       const createKafkaTableQuery = `
@@ -432,6 +571,12 @@ export class ClickHouseService implements OnModuleInit, OnModuleDestroy {
         query: createMonitoringViewQuery,
       });
       */
+
+      // Surface what broker the live table actually ended up bound to, so a
+      // stale/unreachable broker is visible in the logs instead of failing
+      // silently (the ClickHouse Kafka Engine produces/consumes in the
+      // background and swallows connection errors). EVO-1925.
+      await this.logContactEventsKafkaState(databaseName, tableName);
 
       this.logger.log(
         '✅ Kafka integration for ClickHouse created successfully',
