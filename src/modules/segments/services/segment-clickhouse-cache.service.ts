@@ -91,11 +91,10 @@ export class SegmentCacheService implements OnModuleInit {
         `Failed to get segment assignments from cache: ${error.message}`,
         error.stack,
       );
-      return {
-        assignments: [],
-        fromCache: false,
-        computedAt: new Date(),
-      };
+      // Propagate instead of returning an empty result silently: a ClickHouse
+      // failure here must not be indistinguishable from a contact that genuinely
+      // has no segment assignments. (EVO-1924, aligned with EVO-1901.)
+      throw error;
     }
   }
 
@@ -132,7 +131,9 @@ export class SegmentCacheService implements OnModuleInit {
       this.logger.error(
         `Failed to check segment assignment from cache: ${error.message}`,
       );
-      return false;
+      // Propagate: a ClickHouse failure must not be silently treated as
+      // "not in segment". (EVO-1924, aligned with EVO-1901.)
+      throw error;
     }
   }
 
@@ -198,11 +199,10 @@ export class SegmentCacheService implements OnModuleInit {
       this.logger.error(
         `Failed to get segment contacts from cache: ${error.message}`,
       );
-      return {
-        contactIds: [],
-        total: 0,
-        fromCache: false,
-      };
+      // Propagate instead of returning an empty set silently: a ClickHouse
+      // failure here must not be indistinguishable from a genuinely empty
+      // segment. (EVO-1924, aligned with EVO-1901.)
+      throw error;
     }
   }
 
