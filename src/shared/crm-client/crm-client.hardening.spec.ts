@@ -11,7 +11,12 @@
  * Mocks `global.fetch` (native fetch, not axios) and drives the backoff with
  * jest fake timers.
  */
-import { NotFoundException, ServiceUnavailableException } from '@nestjs/common';
+import {
+  BadRequestException,
+  NotFoundException,
+  ServiceUnavailableException,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { register } from 'prom-client';
 import { ClsServiceManager } from 'nestjs-cls';
 
@@ -199,6 +204,119 @@ describe('CrmClientService — generic-path hardening (EVO-1205)', () => {
       'circuit_open',
     );
     expect(fetchMock.mock.calls.length).toBe(callsBefore);
+  });
+
+  // ==========================================================================
+  // EVO-1918 — 404 (and the non-breaking 4xx class) must NOT open the breaker.
+  //
+  // The breaker threshold is pinned to 1 in this suite, so if any single 404
+  // counted as a failure the circuit would open immediately and the NEXT call
+  // (a valid contact) would short-circuit with `circuit_open`. Asserting that
+  // the valid call still reaches fetch and succeeds proves the breaker stayed
+  // CLOSED across the 404 storm.
+  // ==========================================================================
+  describe('EVO-1918: 404 / 4xx do not open the circuit breaker', () => {
+    it('a storm of GET 404s keeps the breaker closed; valid contact still resolves', async () => {
+      // 10 consecutive 404s (unsynced contacts) ...
+      for (let i = 0; i < 10; i++) {
+        fetchMock.mockResolvedValueOnce(
+          buildFetchResponse({ status: 404, body: {} }),
+        );
+        const result = await service.get(`/api/v1/contacts/missing-${i}`, {
+          noCache: true,
+        });
+        expect(result).toBeNull();
+      }
+      // No retries, no terminal failures were recorded for the 404s.
+      expect(fetchMock).toHaveBeenCalledTimes(10);
+      expect(
+        await counterTotal('contacts_client_terminal_failure_total'),
+      ).toBe(0);
+
+      // ... a valid contact afterwards still hits the CRM and succeeds.
+      fetchMock.mockResolvedValueOnce(
+        buildFetchResponse({ status: 200, body: { id: 'ada', name: 'Ada' } }),
+      );
+      const ok = await service.get<any>('/api/v1/contacts/ada', {
+        noCache: true,
+      });
+      expect(ok).toEqual({ id: 'ada', name: 'Ada' });
+      expect(fetchMock).toHaveBeenCalledTimes(11);
+    });
+
+    it('a storm of write 404s (NotFound) keeps the breaker closed; valid write still resolves', async () => {
+      for (let i = 0; i < 10; i++) {
+        fetchMock.mockResolvedValueOnce(
+          buildFetchResponse({ status: 404, body: {} }),
+        );
+        await expect(
+          service.patch(`/api/v1/contacts/missing-${i}`, { labels: [] }),
+        ).rejects.toBeInstanceOf(NotFoundException);
+      }
+      expect(
+        await counterTotal('contacts_client_terminal_failure_total'),
+      ).toBe(0);
+
+      fetchMock.mockResolvedValueOnce(
+        buildFetchResponse({ status: 204 }),
+      );
+      await expect(
+        service.patch('/api/v1/contacts/ada', { labels: [] }),
+      ).resolves.toBeNull();
+      expect(fetchMock).toHaveBeenCalledTimes(11);
+    });
+
+    it('other non-breaking 4xx (401, 422) also keep the breaker closed', async () => {
+      fetchMock.mockResolvedValueOnce(
+        buildFetchResponse({ status: 401, body: {} }),
+      );
+      await expect(
+        service.get('/api/v1/contacts/x', { noCache: true }),
+      ).rejects.toBeInstanceOf(UnauthorizedException);
+
+      fetchMock.mockResolvedValueOnce(
+        buildFetchResponse({ status: 422, body: { errors: ['bad'] } }),
+      );
+      await expect(
+        service.patch('/api/v1/contacts/x', { email: 'nope' }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+
+      // Breaker still closed: no terminal failures, and a valid call goes through.
+      expect(
+        await counterTotal('contacts_client_terminal_failure_total'),
+      ).toBe(0);
+      fetchMock.mockResolvedValueOnce(
+        buildFetchResponse({ status: 200, body: { id: 'ada' } }),
+      );
+      const ok = await service.get<any>('/api/v1/contacts/ada', {
+        noCache: true,
+      });
+      expect(ok).toEqual({ id: 'ada' });
+    });
+
+    it('5xx still opens the breaker (regression guard for the real availability path)', async () => {
+      jest.useFakeTimers();
+      // threshold=1 → one exhausted 5xx call trips the circuit.
+      fetchMock.mockResolvedValue(
+        buildFetchResponse({ status: 500, body: {} }),
+      );
+      const first = service
+        .get('/api/v1/contacts/x', { noCache: true })
+        .catch((e) => e);
+      await jest.advanceTimersByTimeAsync(7000);
+      await first;
+
+      const callsBefore = fetchMock.mock.calls.length;
+      const second = await service
+        .get('/api/v1/contacts/y', { noCache: true })
+        .catch((e) => e);
+      expect(second).toBeInstanceOf(ContactsClientUnavailableException);
+      expect((second as ContactsClientUnavailableException).reason).toBe(
+        'circuit_open',
+      );
+      // No new fetch — the breaker short-circuited.
+      expect(fetchMock.mock.calls.length).toBe(callsBefore);
+    });
   });
 
   it('AC4: contacts_client_retry_total increments on retry', async () => {
