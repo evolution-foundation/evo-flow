@@ -44,7 +44,7 @@ export class UserPropertySegmentBuilder extends BaseSegmentBuilder {
       SELECT DISTINCT ce.contact_id
       FROM evo_campaign.contact_events ce
       WHERE ce.event_name = 'identify'
-        AND JSON_EXTRACT_STRING(ce.traits, '${propertyName}') = '${value}'
+        AND JSONExtractString(ce.traits, '${propertyName}') = '${value}'
         AND ${ContactExclusionQueries.getDeletedContactExclusion('ce.contact_id')}
       GROUP BY ce.contact_id
       HAVING ${ContactExclusionQueries.getLatestContactStateExclusion()}
@@ -65,8 +65,8 @@ export class UserPropertySegmentBuilder extends BaseSegmentBuilder {
       FROM evo_campaign.contact_events ce
       WHERE ce.event_name = 'identify'
         AND (
-          JSON_EXTRACT_STRING(ce.traits, '${propertyName}') != '${value}'
-          OR JSON_EXTRACT_STRING(ce.traits, '${propertyName}') IS NULL
+          JSONExtractString(ce.traits, '${propertyName}') != '${value}'
+          OR JSONExtractString(ce.traits, '${propertyName}') IS NULL
         )
         AND ${ContactExclusionQueries.getDeletedContactExclusion('ce.contact_id')}
       GROUP BY ce.contact_id
@@ -87,7 +87,7 @@ export class UserPropertySegmentBuilder extends BaseSegmentBuilder {
       SELECT DISTINCT ce.contact_id
       FROM evo_campaign.contact_events ce
       WHERE ce.event_name = 'identify'
-        AND JSON_EXTRACT_STRING(ce.traits, '${propertyName}') LIKE '%${value}%'
+        AND JSONExtractString(ce.traits, '${propertyName}') LIKE '%${value}%'
         AND ${ContactExclusionQueries.getDeletedContactExclusion('ce.contact_id')}
       GROUP BY ce.contact_id
       HAVING ${ContactExclusionQueries.getLatestContactStateExclusion()}
@@ -108,8 +108,8 @@ export class UserPropertySegmentBuilder extends BaseSegmentBuilder {
       FROM evo_campaign.contact_events ce
       WHERE ce.event_name = 'identify'
         AND (
-          JSON_EXTRACT_STRING(ce.traits, '${propertyName}') NOT LIKE '%${value}%'
-          OR JSON_EXTRACT_STRING(ce.traits, '${propertyName}') IS NULL
+          JSONExtractString(ce.traits, '${propertyName}') NOT LIKE '%${value}%'
+          OR JSONExtractString(ce.traits, '${propertyName}') IS NULL
         )
         AND ${ContactExclusionQueries.getDeletedContactExclusion('ce.contact_id')}
       GROUP BY ce.contact_id
@@ -129,8 +129,8 @@ export class UserPropertySegmentBuilder extends BaseSegmentBuilder {
       SELECT DISTINCT ce.contact_id
       FROM evo_campaign.contact_events ce
       WHERE ce.event_name = 'identify'
-        AND JSON_EXTRACT_STRING(ce.traits, '${propertyName}') IS NOT NULL
-        AND JSON_EXTRACT_STRING(ce.traits, '${propertyName}') != ''
+        AND JSONExtractString(ce.traits, '${propertyName}') IS NOT NULL
+        AND JSONExtractString(ce.traits, '${propertyName}') != ''
         AND ${ContactExclusionQueries.getDeletedContactExclusion('ce.contact_id')}
       GROUP BY ce.contact_id
       HAVING ${ContactExclusionQueries.getLatestContactStateExclusion()}
@@ -150,8 +150,8 @@ export class UserPropertySegmentBuilder extends BaseSegmentBuilder {
       FROM evo_campaign.contact_events ce
       WHERE ce.event_name = 'identify'
         AND (
-          JSON_EXTRACT_STRING(ce.traits, '${propertyName}') IS NULL
-          OR JSON_EXTRACT_STRING(ce.traits, '${propertyName}') = ''
+          JSONExtractString(ce.traits, '${propertyName}') IS NULL
+          OR JSONExtractString(ce.traits, '${propertyName}') = ''
         )
         AND ${ContactExclusionQueries.getDeletedContactExclusion('ce.contact_id')}
       GROUP BY ce.contact_id

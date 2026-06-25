@@ -16,8 +16,8 @@ export class EmailSegmentBuilder extends BaseSegmentBuilder {
       SELECT DISTINCT ce.contact_id
       FROM evo_campaign.contact_events ce
       WHERE ce.event_name = 'identify'
-        AND JSON_EXTRACT_STRING(ce.traits, 'email') != ''
-        AND JSON_EXTRACT_STRING(ce.traits, 'email') IS NOT NULL
+        AND JSONExtractString(ce.traits, 'email') != ''
+        AND JSONExtractString(ce.traits, 'email') IS NOT NULL
         AND ${ContactExclusionQueries.getDeletedContactExclusion('ce.contact_id')}
       GROUP BY ce.contact_id
       HAVING ${ContactExclusionQueries.getLatestContactStateExclusion()}

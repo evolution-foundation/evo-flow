@@ -17,15 +17,15 @@ export class ChannelSegmentBuilder extends BaseSegmentBuilder {
     switch (type) {
       case 'WhatsApp':
         channelCondition =
-          "JSON_EXTRACT_STRING(ce.properties, 'channel') = 'whatsapp'";
+          "JSONExtractString(ce.properties, 'channel') = 'whatsapp'";
         break;
       case 'Web':
         channelCondition =
-          "JSON_EXTRACT_STRING(ce.properties, 'channel') = 'web'";
+          "JSONExtractString(ce.properties, 'channel') = 'web'";
         break;
       case 'SMS':
         channelCondition =
-          "JSON_EXTRACT_STRING(ce.properties, 'channel') = 'sms'";
+          "JSONExtractString(ce.properties, 'channel') = 'sms'";
         break;
       default:
         throw new Error(`Unsupported channel type: ${type}`);

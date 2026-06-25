@@ -29,7 +29,7 @@ export class LabelSegmentBuilder extends BaseSegmentBuilder {
       SELECT DISTINCT ce.contact_id
       FROM evo_campaign.contact_events ce
       WHERE ce.event_name = 'label_added'
-        AND JSON_EXTRACT_STRING(ce.properties, 'labelName') = '${labelName}'
+        AND JSONExtractString(ce.properties, 'labelName') = '${labelName}'
         AND ${ContactExclusionQueries.getDeletedContactExclusion('ce.contact_id')}
       GROUP BY ce.contact_id
       HAVING ${ContactExclusionQueries.getLatestContactStateExclusion()}
@@ -56,7 +56,7 @@ export class LabelSegmentBuilder extends BaseSegmentBuilder {
           SELECT DISTINCT ce2.contact_id
           FROM evo_campaign.contact_events ce2
           WHERE ce2.event_name = 'label_added'
-            AND JSON_EXTRACT_STRING(ce2.properties, 'labelName') = '${labelName}'
+            AND JSONExtractString(ce2.properties, 'labelName') = '${labelName}'
         )
         AND ${ContactExclusionQueries.getDeletedContactExclusion('ce.contact_id')}
       GROUP BY ce.contact_id
