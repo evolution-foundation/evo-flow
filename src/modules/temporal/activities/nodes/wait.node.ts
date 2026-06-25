@@ -114,18 +114,57 @@ export class WaitNode extends BaseNode {
       });
   }
 
+  // Source handles drawn by the FE Wait node (WaitNode.tsx) for multi-output waits.
+  static readonly SUCCESS_HANDLE = 'wait-success';
+  static readonly OTHERWISE_HANDLE = 'wait-otherwise';
+
   /**
-   * Process wait completion (called by signal handler)
+   * Whether the Wait node exposes the two branch outputs (success vs
+   * timeout/fallback) in the editor. Mirrors `needsMultipleOutputs` in the FE.
+   */
+  static hasMultipleOutputs(nodeData: WaitNodeInput['nodeData']): boolean {
+    return Boolean(
+      nodeData?.enableFallback || nodeData?.waitType === 'time_or_condition',
+    );
+  }
+
+  /**
+   * Resolve which outgoing edge handle the workflow should follow once the wait
+   * completes. For multi-output waits this maps the result to the FE handles
+   * (`wait-success` / `wait-otherwise`) so the workflow can match the edge by
+   * `sourceHandle` — the same contract used by conditional/split nodes.
+   * Single-output waits return `null` (workflow takes the only outgoing edge).
+   */
+  static resolveWaitHandle(
+    input: WaitNodeInput,
+    result: 'success' | 'timeout' | 'cancelled',
+  ): string | null {
+    if (!WaitNode.hasMultipleOutputs(input.nodeData)) {
+      // Single output - workflow follows the single outgoing edge.
+      return null;
+    }
+
+    return result === 'success'
+      ? WaitNode.SUCCESS_HANDLE
+      : WaitNode.OTHERWISE_HANDLE;
+  }
+
+  /**
+   * Process wait completion (called by signal handler).
+   *
+   * Legacy id-based routing kept for journeys that explicitly persist
+   * `successNodeId` / `otherwiseNodeId` / `nextNodeId` in node-data. The FE
+   * never writes these fields, so handle-based routing via `resolveWaitHandle`
+   * is the primary mechanism; this returns `null` in that case and the workflow
+   * falls back to matching the outgoing edge by `sourceHandle`.
    */
   static processWaitCompletion(
     input: WaitNodeInput,
     result: 'success' | 'timeout' | 'cancelled',
   ): string | null {
     const { nodeData } = input;
-    const hasMultipleOutputs =
-      nodeData.enableFallback || nodeData.waitType === 'time_or_condition';
 
-    if (!hasMultipleOutputs) {
+    if (!WaitNode.hasMultipleOutputs(nodeData)) {
       // Single output - always go to default next node
       return nodeData.nextNodeId || null;
     }

@@ -588,14 +588,40 @@ export async function JourneyExecutionWorkflow(
               }
               isWaiting = false;
 
-              // Determine next node based on wait result using activity
-              nextNodeId = await actionNodeActivities.processWaitCompletion({
-                nodeId: currentNode.id,
-                contactId: input.contactId,
-                sessionId: input.sessionId,
-                nodeData: currentNode.data,
-                waitResult: waitResult.result,
-              });
+              // Determine next node based on wait result.
+              //
+              // Primary routing is by outgoing-edge handle: the FE Wait node
+              // draws `wait-success` / `wait-otherwise` source handles for
+              // multi-output waits, so we resolve the handle and let the shared
+              // edge-matching logic below (sourceHandle === nextNodeHandle)
+              // pick the deterministic target — same contract as
+              // conditional/split nodes. (EVO-1912)
+              //
+              // Legacy id-based routing (successNodeId/otherwiseNodeId/
+              // nextNodeId in node-data) is preserved for journeys that
+              // explicitly persist those ids; the FE never writes them, so it
+              // returns undefined and we fall through to handle routing.
+              const [resolvedNextNodeId, resolvedHandle] = await Promise.all([
+                actionNodeActivities.processWaitCompletion({
+                  nodeId: currentNode.id,
+                  contactId: input.contactId,
+                  sessionId: input.sessionId,
+                  nodeData: currentNode.data,
+                  waitResult: waitResult.result,
+                }),
+                actionNodeActivities.resolveWaitHandle({
+                  nodeId: currentNode.id,
+                  contactId: input.contactId,
+                  sessionId: input.sessionId,
+                  nodeData: currentNode.data,
+                  waitResult: waitResult.result,
+                }),
+              ]);
+
+              // Persist on nodeResult so it survives the generic
+              // `nextNodeId = nodeResult.nextNodeId` reassignment below.
+              nodeResult.nextNodeId = resolvedNextNodeId;
+              nodeResult.nextNodeHandle = resolvedHandle;
 
               // Update variables with wait completion info
               nodeResult.variables = {
