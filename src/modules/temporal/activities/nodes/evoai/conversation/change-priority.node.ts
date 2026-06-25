@@ -5,6 +5,7 @@ export interface ChangePriorityNodeInput {
   nodeId: string;
   conversationId: string;
   sessionId: string;
+  journeyId?: string; // EVO-1917: resolve journey-default {{variables}} via interpolateNodeData
   nodeData: {
     priority?: 'low' | 'medium' | 'high' | 'urgent' | null;
     nextNodeId?: string;

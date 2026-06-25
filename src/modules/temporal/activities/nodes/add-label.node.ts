@@ -7,6 +7,9 @@ export interface AddLabelNodeInput {
   labelId: string;
   labelName?: string;
   sessionId: string;
+  // EVO-1917: journeyId lets interpolateNodeData load journey-level variable
+  // defaults so {{variables}} resolve in this node (mirrors send-webhook).
+  journeyId?: string;
   nodeData: {
     labelId: string;
     nextNodeId?: string;

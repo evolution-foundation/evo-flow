@@ -75,6 +75,31 @@ describe('BaseNode.interpolateNodeData — journeyId fallback (EVO-1885)', () =>
     expect(findOne).toHaveBeenCalledWith({ where: { id: 'journey-from-input' } });
   });
 
+  // EVO-1917: the dispatch sweep threads input.journeyId to every interpolating
+  // executor. This proves that thread is load-bearing: when the cached session
+  // carries no journeyId (e.g. a lean cache shape), the explicitly-dispatched
+  // input.journeyId is what resolves journey-default {{variables}}.
+  it('EVO-1917: resolves journey defaults from input.journeyId when session has none', async () => {
+    mockGetSessionFromCache.mockResolvedValue({
+      id: 's1',
+      // no journeyId on the session — only the dispatched input carries it
+      variables: {},
+    });
+    findOne.mockResolvedValue({
+      variables: [{ name: 'greeting', defaultValue: 'Olá' }],
+    });
+
+    const result = await node.interpolate(
+      { sessionId: 's1', journeyId: 'journey-from-dispatch' },
+      { message: '{{greeting}}' },
+    );
+
+    expect(findOne).toHaveBeenCalledWith({
+      where: { id: 'journey-from-dispatch' },
+    });
+    expect(result.message).toBe('Olá');
+  });
+
   it('AC3: skips the journey query when no id resolves, leaving journey-default tokens literal', async () => {
     mockGetSessionFromCache.mockResolvedValue({
       id: 's1',

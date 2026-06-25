@@ -6,6 +6,7 @@ export interface SendCannedResponseNodeInput {
   conversationId?: string;
   sessionId: string;
   contactId?: string;
+  journeyId?: string; // EVO-1917: resolve journey-default {{variables}} via interpolateNodeData
   nodeData: {
     canned_response_id?: string;
     cannedResponseId?: string;

@@ -669,6 +669,9 @@ export async function JourneyExecutionWorkflow(
               labelId: currentNode.data.labelId,
               labelName: currentNode.data.labelName,
               sessionId: input.sessionId,
+              // EVO-1917: thread journeyId so interpolateNodeData resolves
+              // journey-default {{variables}} (mirrors send-webhook/scheduled-action).
+              journeyId: input.journeyId,
               nodeData: currentNode.data,
             });
             break;
@@ -681,6 +684,7 @@ export async function JourneyExecutionWorkflow(
               labelId: currentNode.data.labelId,
               labelName: currentNode.data.labelName,
               sessionId: input.sessionId,
+              journeyId: input.journeyId, // EVO-1917
               nodeData: currentNode.data,
             });
             break;
@@ -691,6 +695,7 @@ export async function JourneyExecutionWorkflow(
               nodeId: currentNode.id,
               contactId: input.contactId,
               sessionId: input.sessionId,
+              journeyId: input.journeyId, // EVO-1917
               nodeData: currentNode.data,
             });
             break;
@@ -778,6 +783,7 @@ export async function JourneyExecutionWorkflow(
               conversationId:
                 input.triggerEvent?.properties?.conversation_id || undefined,
               sessionId: input.sessionId,
+              journeyId: input.journeyId, // EVO-1917: resolve journey-default {{var}} in condition values
               nodeData: currentNode.data,
             });
             break;
@@ -797,6 +803,7 @@ export async function JourneyExecutionWorkflow(
               conversationId: conversationId || undefined,
               sessionId: input.sessionId,
               contactId: input.contactId, // Pass contactId for creating new conversations
+              journeyId: input.journeyId, // EVO-1917: resolve journey-default {{var}} in message body
               nodeData: currentNode.data,
             });
 
@@ -817,6 +824,7 @@ export async function JourneyExecutionWorkflow(
                   input.triggerEvent?.properties?.conversation_id || undefined,
                 sessionId: input.sessionId,
                 contactId: input.contactId,
+                journeyId: input.journeyId, // EVO-1917
                 nodeData: currentNode.data,
               });
             break;
@@ -827,6 +835,7 @@ export async function JourneyExecutionWorkflow(
               conversationId:
                 input.triggerEvent?.properties?.conversation_id || undefined,
               sessionId: input.sessionId,
+              journeyId: input.journeyId, // EVO-1917
               nodeData: currentNode.data,
             });
             break;
@@ -838,6 +847,7 @@ export async function JourneyExecutionWorkflow(
                 conversationId:
                   input.triggerEvent?.properties?.conversation_id || undefined,
                 sessionId: input.sessionId,
+                journeyId: input.journeyId, // EVO-1917
                 nodeData: currentNode.data,
               });
             break;
@@ -849,6 +859,7 @@ export async function JourneyExecutionWorkflow(
                 conversationId:
                   input.triggerEvent?.properties?.conversation_id || undefined,
                 sessionId: input.sessionId,
+                journeyId: input.journeyId, // EVO-1917
                 nodeData: currentNode.data,
               });
             break;
@@ -860,6 +871,7 @@ export async function JourneyExecutionWorkflow(
                 conversationId:
                   input.triggerEvent?.properties?.conversation_id || undefined,
                 sessionId: input.sessionId,
+                journeyId: input.journeyId, // EVO-1917
                 nodeData: currentNode.data,
               });
             break;
@@ -870,6 +882,7 @@ export async function JourneyExecutionWorkflow(
               conversationId:
                 input.triggerEvent?.properties?.conversation_id || '',
               sessionId: input.sessionId,
+              journeyId: input.journeyId, // EVO-1917
               nodeData: currentNode.data,
             });
             break;
@@ -880,6 +893,7 @@ export async function JourneyExecutionWorkflow(
               conversationId:
                 input.triggerEvent?.properties?.conversation_id || '',
               sessionId: input.sessionId,
+              journeyId: input.journeyId, // EVO-1917
               nodeData: currentNode.data,
             });
             break;
@@ -890,6 +904,7 @@ export async function JourneyExecutionWorkflow(
               conversationId:
                 input.triggerEvent?.properties?.conversation_id || '',
               sessionId: input.sessionId,
+              journeyId: input.journeyId, // EVO-1917
               nodeData: currentNode.data,
             });
             break;
@@ -901,6 +916,7 @@ export async function JourneyExecutionWorkflow(
                 input.triggerEvent?.properties?.conversation_id ||
                 'inbox-level', // Bot assignment can work without specific conversation
               sessionId: input.sessionId,
+              journeyId: input.journeyId, // EVO-1917
               nodeData: currentNode.data,
             });
             break;
@@ -957,6 +973,7 @@ export async function JourneyExecutionWorkflow(
               conversationId:
                 input.triggerEvent?.properties?.conversation_id || '',
               sessionId: input.sessionId,
+              journeyId: input.journeyId, // EVO-1917
               nodeData: currentNode.data,
             });
             break;

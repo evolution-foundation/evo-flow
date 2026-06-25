@@ -17,6 +17,7 @@ export interface ConditionalNodeInput {
   contactId: string;
   conversationId?: string;
   sessionId: string;
+  journeyId?: string; // EVO-1917: resolve journey-default {{variables}} in condition values via interpolateNodeData
   nodeData: {
     paths: Array<{
       id: string;

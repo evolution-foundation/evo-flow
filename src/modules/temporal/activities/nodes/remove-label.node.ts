@@ -7,6 +7,7 @@ export interface RemoveLabelNodeInput {
   labelId: string;
   labelName?: string;
   sessionId: string;
+  journeyId?: string; // EVO-1917: resolve journey-default {{variables}} via interpolateNodeData
   nodeData: {
     labelId: string;
     nextNodeId?: string;

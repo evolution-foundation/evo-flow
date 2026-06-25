@@ -31,6 +31,7 @@ export interface SendMessageNodeInput {
   conversationId?: string; // Optional - will create new conversation if not provided
   sessionId: string;
   contactId?: string; // Add contactId for creating new conversations
+  journeyId?: string; // EVO-1917: resolve journey-default {{variables}} in the message body via interpolateNodeData
   nodeData: {
     message?: string;
     message_content?: string; // Alternative field name from frontend
