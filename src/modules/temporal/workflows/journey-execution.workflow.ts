@@ -14,6 +14,7 @@ import type { JourneyTrackingActivities } from '../activities/journey-tracking.a
 import type { JourneyTrackingContext } from '../services/journey-tracking.service';
 import type { WaitActivities } from '../activities/wait.activities';
 import { resolveInitialWorkflowStatus } from './initial-workflow-status.util';
+import { normalizeConditionalPathHandle } from './conditional-path-handle.util';
 
 // Interfaces for workflow input and state
 export interface JourneyExecutionInput {
@@ -1164,9 +1165,18 @@ export async function JourneyExecutionWorkflow(
           if (outgoingEdges && outgoingEdges.length > 0) {
             // Check if this is a multi-output node (like split or wait with fallback)
             if (nodeResult.nextNodeHandle) {
-              // Find edge matching the specific handle
+              // Find edge matching the specific handle. Normalize an optional
+              // legacy `path-` prefix on both sides so conditional journeys
+              // saved before EVO-1902 (sourceHandle `path-<id>`) still route to
+              // the matched branch instead of falling through to else/first.
+              // Split (`split-variant-<id>`) is untouched — see helper. (EVO-1922)
+              const normalizedHandle = normalizeConditionalPathHandle(
+                nodeResult.nextNodeHandle,
+              );
               const targetEdge = outgoingEdges.find(
-                (edge: any) => edge.sourceHandle === nodeResult.nextNodeHandle,
+                (edge: any) =>
+                  normalizeConditionalPathHandle(edge.sourceHandle) ===
+                  normalizedHandle,
               );
 
               // log.info('🔍 DEBUG: Handle-based edge matching', {
