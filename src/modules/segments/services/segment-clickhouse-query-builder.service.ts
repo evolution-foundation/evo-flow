@@ -96,6 +96,14 @@ export class SegmentClickHouseQueryBuilderService {
         let useArgMax = false;
         let operator = '';
         let value = '';
+        // EVO-1901 (D12): custom attributes are ingested as delta events
+        // (`contact.custom_attribute.changed`) carrying { attributeName,
+        // attributeValue, changeType }, NOT as a flat or nested `traits` key. The
+        // generic `JSONExtractString(traits, '<attr>')` extraction below never
+        // matches them (→ 0 members). When this flag is set, the condition +
+        // argMaxValue are overridden further down to read the delta stream.
+        let isCustomAttribute = false;
+        let customAttributeName = '';
 
         // Determinar como extrair o valor baseado no path
         if (userPropNode.path === 'labels') {
@@ -112,15 +120,16 @@ export class SegmentClickHouseQueryBuilderService {
           }
           useArgMax = true; // Custom attributes podem mudar
         } else if (userPropNode.path.startsWith('customAttributes.')) {
-          // Path completo de custom attribute - mas na verdade está salvo como campo direto
-          const customAttributeName = userPropNode.path.replace(
-            'customAttributes.',
-            '',
-          );
-          extractPath = customAttributeName; // Campo direto, não aninhado
+          // EVO-1901 (D12): the custom attribute is NOT a flat `traits.<attr>` key
+          // (the previous assumption) — it arrives as a delta event. Capture the
+          // attribute name; the condition + argMaxValue are overridden below to
+          // read `contact.custom_attribute.changed` events.
+          customAttributeName = userPropNode.path.replace('customAttributes.', '');
+          extractPath = customAttributeName;
+          isCustomAttribute = true;
           useArgMax = true; // Custom attributes podem mudar
           this.logger.debug(
-            `Custom attribute mapping: original path=${userPropNode.path}, extractPath=${extractPath}`,
+            `Custom attribute mapping: path=${userPropNode.path}, attributeName=${customAttributeName}`,
           );
         } else if (userPropNode.path.startsWith('additionalAttributes.')) {
           // Additional attributes
@@ -264,6 +273,32 @@ export class SegmentClickHouseQueryBuilderService {
               .replace(/\s+/g, ' ')
               .trim();
           }
+        }
+
+        // EVO-1901 (D12): custom attributes are stored as delta events
+        // (`contact.custom_attribute.changed` with { attributeName, attributeValue,
+        // changeType }), never as a flat/nested `traits` key — so the generic
+        // extraction above matches zero rows and segments computed 0 members. Read
+        // the attribute's change stream instead and argMax the latest value (a
+        // `removed` change clears it). generateArgMaxValidation then applies the
+        // operator/value comparison over this argMaxValue.
+        if (isCustomAttribute) {
+          condition = `event_name = 'contact.custom_attribute.changed' AND JSONExtractString(traits, 'attributeName') = '${customAttributeName}'`;
+          argMaxValue = `
+            CASE
+              WHEN contact_or_anonymous_id IN (
+                SELECT DISTINCT contact_or_anonymous_id
+                FROM contact_events
+                WHERE event_name = 'contact_deleted'
+                GROUP BY contact_or_anonymous_id
+                HAVING argMax(occurred_at, occurred_at) > 0
+              ) THEN ''
+              WHEN JSONExtractString(traits, 'changeType') = 'removed' THEN ''
+              ELSE JSONExtractString(traits, 'attributeValue')
+            END
+          `
+            .replace(/\s+/g, ' ')
+            .trim();
         }
 
         // Para campos mutáveis, incluir informação do operador e valor para validação posterior

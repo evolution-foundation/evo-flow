@@ -35,4 +35,45 @@ describe('EVO-1901 live segment recompute SQL builder', () => {
     expect(serialized).toContain('JSONExtractString');
     expect(serialized).not.toContain('JSON_EXTRACT_STRING');
   });
+
+  // EVO-1901 (D12) real fix: a custom-attribute condition must read the delta
+  // event stream (`contact.custom_attribute.changed` → attributeName/attributeValue),
+  // NOT a flat `traits.<attr>` key. The flat extraction matched zero rows, which
+  // is what made conditional segments compute 0 members (verified against live
+  // ClickHouse: flat `JSONExtractString(traits,'tier')` → 0 contacts; delta
+  // approach → the real members).
+  it('reads custom attributes from the delta stream, not a flat traits key', () => {
+    const segment = { id: 'seg-1' } as any;
+    const node = {
+      id: 'n1',
+      type: SegmentNodeType.UserProperty,
+      path: 'customAttributes.tier',
+      operator: { type: 'Equals', value: 'platinum' },
+      value: 'platinum',
+    } as any;
+
+    const [subQuery] = builder.segmentNodeToStateSubQuery(segment, node);
+
+    // Selects the attribute's change events…
+    expect(subQuery.condition).toContain(
+      "event_name = 'contact.custom_attribute.changed'",
+    );
+    expect(subQuery.condition).toContain(
+      "JSONExtractString(traits, 'attributeName') = 'tier'",
+    );
+    // …and argMaxes the delta value (cleared on removal)…
+    expect(subQuery.argMaxValue).toContain(
+      "JSONExtractString(traits, 'attributeValue')",
+    );
+    expect(subQuery.argMaxValue).toContain("'changeType'");
+    // …never the broken flat extraction that matched nothing.
+    expect(subQuery.condition).not.toContain(
+      "JSONExtractString(traits, 'tier')",
+    );
+    expect(subQuery.argMaxValue).not.toContain(
+      "JSONExtractString(traits, 'tier')",
+    );
+    expect(subQuery.validationInfo?.operator).toBe('Equals');
+    expect(subQuery.validationInfo?.value).toBe('platinum');
+  });
 });
