@@ -355,4 +355,23 @@ describe('JourneySessionCacheService — lazy contact upsert satisfies FK (EVO-1
 
     expect(repo.manager.query).not.toHaveBeenCalled();
   });
+
+  it('does NOT skip a present-but-non-uuid contact id (it reaches the INSERT and fails loud at the DB)', async () => {
+    // Contract guard for the JSDoc: only a falsy id is short-circuited. A
+    // present-but-non-uuid id is passed straight to the INSERT — here the mock
+    // accepts it, but against a real DB the uuid cast fails loudly, preserving
+    // the existing error contract (it is NOT silently skipped).
+    const repo = makeRepository();
+    const service = makeService(repo);
+
+    const session = makeSession('sess-bad-id');
+    (session as unknown as { contactId: string }).contactId = 'not-a-uuid';
+
+    await service.set(session);
+
+    expect(repo.manager.query).toHaveBeenCalledWith(
+      'INSERT INTO contacts (id) VALUES ($1) ON CONFLICT (id) DO NOTHING',
+      ['not-a-uuid'],
+    );
+  });
 });

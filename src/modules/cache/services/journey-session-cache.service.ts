@@ -141,13 +141,23 @@ export class JourneySessionCacheService extends BaseCacheService<
    * EVO-1929: idempotently ensure a minimal `contacts` row exists so the
    * `journey_sessions.contact_id` FK is satisfied before persisting a session.
    *
-   * The contacts table is owned by the CRM (Rails) and only the `id` column is
-   * mandatory — all other columns have DB-level defaults or are nullable — so
-   * an id-only insert is a valid, minimal row. `ON CONFLICT (id) DO NOTHING`
-   * makes this a no-op when the contact already exists (CRM-synced or seeded),
-   * so it never overwrites real contact data and is safe to call on every
-   * session write. A missing/non-uuid id is skipped (the save itself will then
-   * fail loudly, preserving the existing error contract).
+   * The `contacts` table targeted here is evo-flow's OWN table in
+   * `evo_campaign` (created by the init-base-tables migration), NOT the CRM's
+   * Rails `contacts` — a Postgres FK never crosses databases. In that table
+   * only `id` is mandatory; every other column has a DB-level default
+   * ('', false, '{}'::jsonb) or is nullable, so an id-only insert is a valid,
+   * minimal row. `ON CONFLICT (id) DO NOTHING` makes this a no-op when the
+   * contact already exists (CRM-synced or seeded), so it never overwrites real
+   * contact data and is safe to call on every session write.
+   *
+   * Deploy caveat: this relies on evo-flow pointing at its own `evo_campaign`
+   * schema. If evo-flow is ever repointed at the CRM's Postgres (`evo_community`),
+   * the Rails `contacts` has `created_at`/`updated_at` NOT NULL WITHOUT a
+   * default, so the id-only insert would break — revisit this then.
+   *
+   * Only a missing/falsy id is skipped here; a present-but-non-uuid id is NOT
+   * skipped — it is passed straight to the INSERT and fails loudly there,
+   * preserving the existing error contract.
    */
   private async ensureContactRow(contactId?: string): Promise<void> {
     if (!contactId) {
