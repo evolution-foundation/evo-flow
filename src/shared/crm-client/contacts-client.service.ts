@@ -137,7 +137,15 @@ export class ContactsClientService {
    *
    * The CRM Rails endpoint replaces the full label list on PATCH, so we
    * read current labels (no-cache to avoid stale data), filter out the
-   * target by either id or title match, then PATCH with the surviving titles.
+   * target, then PATCH with the surviving label names.
+   *
+   * EVO-1928: `GET /contacts/:id` serializes labels as `{ name, color }` —
+   * NO `id`/`title`. The previous filter/map keyed on `lbl.id`/`lbl.title`
+   * (always `undefined` on the real shape) so the target was never removed
+   * AND every survivor mapped to `undefined` → `PATCH { labels: [null, …] }`,
+   * which wiped the contact's entire label set (the node still reported
+   * success). Match/map by `name` (the real field), tolerating legacy
+   * title/id, and drop blanks so a `[null]` can never reach the CRM.
    */
   async removeLabel(
     id: string,
@@ -159,9 +167,11 @@ export class ContactsClientService {
 
     const remaining = (current.labels ?? [])
       .filter(
-        (lbl: LabelDto) => lbl.id !== label && lbl.title !== label,
+        (lbl: LabelDto) =>
+          lbl.name !== label && lbl.title !== label && lbl.id !== label,
       )
-      .map((lbl: LabelDto) => lbl.title);
+      .map((lbl: LabelDto) => lbl.name ?? lbl.title)
+      .filter((name): name is string => Boolean(name && name.length > 0));
 
     await this.crm.patch<unknown>(
       `/api/v1/contacts/${id}`,

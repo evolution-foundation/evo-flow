@@ -56,12 +56,13 @@ describe('ContactsClientService', () => {
   });
 
   describe('removeLabel', () => {
-    it('GETs (no-cache) + PATCHes with remaining label titles', async () => {
+    // GET /contacts/:id serializes labels as { name, color } (no id/title).
+    it('GETs (no-cache) + PATCHes with the surviving label names', async () => {
       crm.get.mockResolvedValueOnce({
         id: 'abc',
         labels: [
-          { id: 'l1', title: 'vip' },
-          { id: 'l2', title: 'lead' },
+          { name: 'vip', color: '#111' },
+          { name: 'lead', color: '#222' },
         ],
       });
       crm.patch.mockResolvedValueOnce({});
@@ -79,7 +80,33 @@ describe('ContactsClientService', () => {
       );
     });
 
-    it('matches label by id as well as title', async () => {
+    // EVO-1928 regression: removing one label must NOT wipe the siblings.
+    // With the old id/title matching, the survivors mapped to `undefined` →
+    // PATCH { labels: [null, null] }, clearing the entire set while the node
+    // still reported success.
+    it('does not wipe the other labels (real { name } serialization)', async () => {
+      crm.get.mockResolvedValueOnce({
+        id: 'abc',
+        labels: [
+          { name: 'vip', color: '#111' },
+          { name: 'lead', color: '#222' },
+          { name: 'customer', color: '#333' },
+        ],
+      });
+      crm.patch.mockResolvedValueOnce({});
+
+      await service.removeLabel('abc', 'lead');
+
+      expect(crm.patch).toHaveBeenCalledWith(
+        '/api/v1/contacts/abc',
+        { labels: ['vip', 'customer'] },
+        undefined,
+      );
+    });
+
+    // Back-compat: any endpoint/caller still carrying { id, title } keeps
+    // matching by id or title and maps to the title.
+    it('matches a legacy { id, title } label by id or title', async () => {
       crm.get.mockResolvedValueOnce({
         id: 'abc',
         labels: [
