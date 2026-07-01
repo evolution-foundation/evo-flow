@@ -112,13 +112,34 @@ export class SegmentClickHouseQueryBuilderService {
           extractPath = 'labels';
           useArgMax = false; // Usar lógica simples
         } else if (userPropNode.path === 'customAttributes') {
-          // Custom attributes precisa do key específico
+          // EVO-1901 (D12 / review req-1): legacy, degenerate shape. The current
+          // frontend NEVER emits this — a custom-attribute condition is
+          // serialized as a dedicated `{ type:'CustomAttribute', attributeName,
+          // operator }` node, handled by the `case SegmentNodeType.CustomAttribute`
+          // branch below (which reads the delta stream). Verified by executing
+          // segmentNodeToStateSubQuery against the FE node shape: it dispatches to
+          // `case CustomAttribute`, never here. A bare `path:'customAttributes'`
+          // carries the attribute name in `operator.value`; left as the old flat
+          // `JSONExtractString(traits,'customAttributes.<name>')` extraction it
+          // matched zero rows and computed 0 members *silently* — the exact D12
+          // symptom. Route it through the same delta-stream read as the dotted
+          // branch and WARN, so a hit from a legacy definition is visible instead
+          // of a silent empty segment (never a silent 0).
           if (userPropNode.operator?.value) {
-            extractPath = `customAttributes.${userPropNode.operator.value}`;
+            customAttributeName = userPropNode.operator.value;
+            extractPath = customAttributeName;
+            isCustomAttribute = true;
           } else {
             extractPath = 'customAttributes';
           }
           useArgMax = true; // Custom attributes podem mudar
+          this.logger.warn(
+            `Segment node ${userPropNode.id ?? '?'} uses the legacy bare ` +
+              `'customAttributes' UserProperty path (attributeName=` +
+              `'${userPropNode.operator?.value ?? ''}'). The frontend now emits a ` +
+              `dedicated CustomAttribute node; this path is only reachable from ` +
+              `legacy segment definitions and is read via the delta stream.`,
+          );
         } else if (userPropNode.path.startsWith('customAttributes.')) {
           // EVO-1901 (D12): the custom attribute is NOT a flat `traits.<attr>` key
           // (the previous assumption) — it arrives as a delta event. Capture the

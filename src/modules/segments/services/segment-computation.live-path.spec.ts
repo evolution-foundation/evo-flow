@@ -12,15 +12,14 @@ import { SegmentNodeType } from '../entities/segment.entity';
  * (modular-segment-computation.service.ts STAGE 1), which this test asserts
  * emits the valid ClickHouse function JSONExtractString.
  *
- * NOTE: the analogous LIVE read-path propagation test
- * (SegmentComputationService.getSegmentContacts throwing on a ClickHouse
- * failure instead of returning []) cannot be compiled under ts-jest right now
- * because importing SegmentComputationService pulls in
- * processing/clickhouse/clickhouse.service.ts, which currently has duplicate
- * `ensureKafkaEngineBroker`/`extractKafkaBrokers` implementations (a develop
- * regression from the #87 / #101 merge) that fails TS2393. The same regression
- * blocks the pre-existing segment-job.service.spec.ts. The read-path code fix
- * (log ERROR + throw) is in segment-computation.service.ts.
+ * The analogous LIVE read-path propagation (N9) is covered by
+ * segment-computation.n9-propagation.spec.ts. That spec imports
+ * SegmentComputationService, which was previously uncompilable under ts-jest
+ * because processing/clickhouse/clickhouse.service.ts had duplicate
+ * `ensureKafkaEngineBroker`/`extractKafkaBrokers` implementations (TS2393, a
+ * develop regression from the #87 / #101 merge). That regression — which also
+ * blocked the pre-existing segment-job.service.spec.ts — was deduped on develop
+ * by EVO-1966, so the N9 spec now compiles and runs.
  */
 describe('EVO-1901 live segment recompute SQL builder', () => {
   const builder = new SegmentClickHouseQueryBuilderService();
@@ -75,5 +74,63 @@ describe('EVO-1901 live segment recompute SQL builder', () => {
     );
     expect(subQuery.validationInfo?.operator).toBe('Equals');
     expect(subQuery.validationInfo?.value).toBe('platinum');
+  });
+
+  // EVO-1901 (review req-1) — the shape the FRONTEND actually serializes for a
+  // custom-attribute condition is a dedicated CustomAttribute node
+  // (`{ type:'CustomAttribute', attributeName, operator }`), NOT a UserProperty
+  // `path`. It must dispatch to `case SegmentNodeType.CustomAttribute` and read
+  // the delta stream by attributeName. This locks the live FE path so it can
+  // never silently regress to a flat `traits` key (0 members).
+  it('FE CustomAttribute node dispatches to the delta-stream case (not a flat traits key)', () => {
+    const segment = { id: 'seg-1' } as any;
+    const node = {
+      id: 'n1',
+      type: SegmentNodeType.CustomAttribute,
+      attributeName: 'tier',
+      operator: { type: 'Equals', value: 'platinum' },
+    } as any;
+
+    const [subQuery] = builder.segmentNodeToStateSubQuery(segment, node);
+
+    expect(subQuery.condition).toContain(
+      "JSONExtractString(traits, 'attributeName') = 'tier'",
+    );
+    expect(subQuery.condition).toContain('contact.custom_attribute.changed');
+    expect(subQuery.argMaxValue).toContain(
+      "JSONExtractString(traits, 'attributeValue')",
+    );
+    // never the flat extraction that matched nothing
+    expect(subQuery.condition).not.toContain(
+      "JSONExtractString(traits, 'tier')",
+    );
+  });
+
+  // EVO-1901 (review req-1) — the legacy bare `path:'customAttributes'` +
+  // operator.value branch used to emit the flat
+  // `JSONExtractString(traits,'customAttributes.<name>')` extraction, silently
+  // computing 0 members (the D12 symptom). It must now read the delta stream by
+  // attributeName instead, so a legacy definition never yields a silent empty
+  // segment.
+  it('legacy bare customAttributes path reads the delta stream, not a silent flat key', () => {
+    const segment = { id: 'seg-1' } as any;
+    const node = {
+      id: 'n1',
+      type: SegmentNodeType.UserProperty,
+      path: 'customAttributes',
+      operator: { type: 'Equals', value: 'tier' },
+    } as any;
+
+    const [subQuery] = builder.segmentNodeToStateSubQuery(segment, node);
+
+    expect(subQuery.condition).toContain(
+      "JSONExtractString(traits, 'attributeName') = 'tier'",
+    );
+    expect(subQuery.condition).not.toContain(
+      "JSONExtractString(traits, 'customAttributes.tier')",
+    );
+    expect(subQuery.argMaxValue).not.toContain(
+      "JSONExtractString(traits, 'customAttributes.tier')",
+    );
   });
 });
