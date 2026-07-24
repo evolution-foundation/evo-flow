@@ -684,17 +684,10 @@ export class ConditionalNode extends BaseNode {
     sessionId: string,
   ): Promise<Record<string, any>> {
     try {
-      const dataSource = await this.initializeDatabase();
-      const { JourneySession } = await import(
-        '../../../journeys/entities/journey-session.entity'
-      );
-      const sessionRepository = dataSource.getRepository(JourneySession);
-
-      const session = await sessionRepository.findOne({
-        where: { id: sessionId },
-      });
-
-      return session?.variables || {};
+      // EVO-1840: the read itself now lives in BaseNode (it was duplicated here
+      // and in set-variable.node.ts); the degrade-to-{} policy below stays local
+      // because it is specific to condition evaluation.
+      return await this.readSessionVariables(sessionId);
     } catch (error: any) {
       // EVO-1913: surface the failure at ERROR level instead of swallowing it
       // as an empty bag silently (which made {{session var}} conditions all
