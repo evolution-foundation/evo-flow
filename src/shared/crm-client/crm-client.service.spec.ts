@@ -142,6 +142,30 @@ describe('CrmClientService', () => {
       ).rejects.toBeInstanceOf(BadRequestException);
     });
 
+    // EVO-2203: an archived-pipeline refusal must reach the journey run as a readable
+    // reason, not a generic "Bad Request Exception".
+    it('surfaces the CRM error message on a 422 envelope, keeping the code', async () => {
+      fetchMock.mockResolvedValueOnce(
+        buildFetchResponse({
+          status: 422,
+          body: {
+            success: false,
+            error: {
+              code: 'PIPELINE_ARCHIVED',
+              message: 'Pipeline is archived and cannot receive conversations',
+            },
+          },
+        }),
+      );
+
+      await expect(
+        service.post('/api/v1/pipelines/p1/pipeline_items', { type: 'conversation' }),
+      ).rejects.toMatchObject({
+        message: 'Pipeline is archived and cannot receive conversations',
+        response: { error: { code: 'PIPELINE_ARCHIVED' } },
+      });
+    });
+
     it('throws ServiceUnavailableException on 5xx after exhausting retries', async () => {
       fetchMock.mockResolvedValue(
         buildFetchResponse({ status: 500, body: { error: 'boom' } }),

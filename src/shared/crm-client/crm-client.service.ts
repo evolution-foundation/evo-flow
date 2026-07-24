@@ -28,6 +28,12 @@ export interface CrmApiResponse<T = any> {
   statusCode?: number;
 }
 
+// The CRM 422 error envelope, as returned by ApiErrorCodes-backed responses.
+interface CrmErrorEnvelope {
+  error?: { code?: string; message?: string };
+  [key: string]: unknown;
+}
+
 export interface CrmConversationContext {
   conversationId: string;
   inboxId?: string;
@@ -469,13 +475,26 @@ export class CrmClientService {
     }
 
     if (response.status === 422) {
-      let errorBody: any = null;
+      let errorBody: CrmErrorEnvelope | string | null = null;
       try {
-        errorBody = await response.json();
+        errorBody = (await response.json()) as CrmErrorEnvelope;
       } catch {
         errorBody = await response.text();
       }
-      throw new BadRequestException(errorBody);
+      // The CRM error envelope is { error: { code, message } }. Lift the message to the top
+      // level so the exception's `message` reads the reason ("Pipeline is archived...")
+      // instead of a generic "Bad Request Exception", while getResponse() keeps error.code
+      // for callers that branch on it (EVO-2203).
+      const reason =
+        (typeof errorBody === 'object' && errorBody?.error?.message) ||
+        (typeof errorBody === 'string'
+          ? errorBody
+          : 'CRM rejected the request');
+      throw new BadRequestException(
+        typeof errorBody === 'object' && errorBody !== null
+          ? { ...errorBody, message: reason }
+          : reason,
+      );
     }
 
     // Other 4xx — surface as BadRequest (unexpected but client-fault).
