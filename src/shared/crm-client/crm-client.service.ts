@@ -31,7 +31,43 @@ export interface CrmApiResponse<T = any> {
 // The CRM 422 error envelope, as returned by ApiErrorCodes-backed responses.
 interface CrmErrorEnvelope {
   error?: { code?: string; message?: string };
+  message?: string;
   [key: string]: unknown;
+}
+
+// A refused write carries its reason in `error.message`; controllers that answer
+// outside the envelope helper put it in a top-level `message`. Neither may be
+// dropped — the reason is the only thing a journey run shows (EVO-2203).
+function crmRejectionReason(
+  body: CrmErrorEnvelope | string | null,
+): string | undefined {
+  if (typeof body === 'string') return body || undefined;
+  if (!body || typeof body !== 'object') return undefined;
+
+  const enveloped = body.error?.message;
+  if (typeof enveloped === 'string' && enveloped) return enveloped;
+
+  return typeof body.message === 'string' && body.message
+    ? body.message
+    : undefined;
+}
+
+// A node result carries a plain string, so the refusal's code and reason are folded
+// into it — otherwise the journey run shows the raw JSON envelope. Callers keep the
+// "CRM Validation error" prefix: executeRequest matches on it to not retry a 422.
+function describeCrm422(rawBody: string): string {
+  let parsed: CrmErrorEnvelope | null = null;
+  try {
+    parsed = JSON.parse(rawBody) as CrmErrorEnvelope;
+  } catch {
+    return rawBody;
+  }
+
+  const reason = crmRejectionReason(parsed);
+  if (!reason) return rawBody;
+
+  const code = parsed?.error?.code;
+  return typeof code === 'string' && code ? `${code}: ${reason}` : reason;
 }
 
 export interface CrmConversationContext {
@@ -481,15 +517,11 @@ export class CrmClientService {
       } catch {
         errorBody = await response.text();
       }
-      // The CRM error envelope is { error: { code, message } }. Lift the message to the top
-      // level so the exception's `message` reads the reason ("Pipeline is archived...")
-      // instead of a generic "Bad Request Exception", while getResponse() keeps error.code
-      // for callers that branch on it (EVO-2203).
+      // Lift the reason to the top level so the exception's `message` reads it
+      // ("Pipeline is archived...") instead of a generic "Bad Request Exception",
+      // while getResponse() keeps error.code for callers that branch on it (EVO-2203).
       const reason =
-        (typeof errorBody === 'object' && errorBody?.error?.message) ||
-        (typeof errorBody === 'string'
-          ? errorBody
-          : 'CRM rejected the request');
+        crmRejectionReason(errorBody) ?? 'CRM rejected the request';
       throw new BadRequestException(
         typeof errorBody === 'object' && errorBody !== null
           ? { ...errorBody, message: reason }
@@ -632,7 +664,9 @@ export class CrmClientService {
 
           if (response.status === 422) {
             const errorBody = await response.text();
-            throw new Error(`CRM Validation error: ${errorBody}`);
+            throw new Error(
+              `CRM Validation error: ${describeCrm422(errorBody)}`,
+            );
           }
 
           if (response.status === 429) {
