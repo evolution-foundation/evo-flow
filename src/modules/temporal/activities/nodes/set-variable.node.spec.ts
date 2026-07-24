@@ -1,10 +1,8 @@
 import { SetVariableNode, SetVariableNodeInput } from './set-variable.node';
 
-// EVO-1840: the Set Variable node offers Increase/Decrease in the UI but the
-// runtime used to ignore `operation` and do a plain SET, so increments never
-// accumulated. These lock the arithmetic and — just as important for this card's
-// silent-success family (EVO-1740) — every way the operation can NOT be honored
-// must surface as a visible failure instead of quietly writing a wrong number.
+// EVO-1840: lock the increase/decrease arithmetic, and — just as important —
+// that every way it cannot be honored surfaces as a visible failure instead of
+// quietly writing a wrong number.
 describe('SetVariableNode', () => {
   let node: SetVariableNode;
 
@@ -85,8 +83,6 @@ describe('SetVariableNode', () => {
     });
 
     it('resolves a {{variable}} amount against the session before parsing', async () => {
-      // the panel's Amount field has a variable picker, and the executor passes
-      // nodeData raw — the node must interpolate or a valid config would abort.
       stubSession({ lead_score: 10, bonus: 5 });
       const result = await node.execute(
         input({
@@ -145,8 +141,6 @@ describe('SetVariableNode', () => {
     });
   });
 
-  // AC#3 / EVO-1740: an operation that cannot be honored fails visibly. Every
-  // case below used to (or would) write a wrong value and report success.
   describe('visible failure instead of a silent wrong write', () => {
     it('a non-numeric amount fails visibly', async () => {
       stubSession({ lead_score: 10 });
@@ -158,7 +152,7 @@ describe('SetVariableNode', () => {
     });
 
     it('an empty amount fails instead of incrementing by 0', async () => {
-      // Number('') === 0, so this used to be a silent no-op reported as success
+      // Number('') === 0, which would read as a valid amount
       stubSession({ lead_score: 10 });
       const result = await node.execute(
         input({ variableName: 'lead_score', operation: 'increase', value: '' }),
@@ -197,7 +191,7 @@ describe('SetVariableNode', () => {
     });
 
     it('a failed session read fails instead of silently rebasing the counter to 0', async () => {
-      // degrading to {} here would turn lead_score 500 into 40 and report success
+      // degrading to {} here would turn lead_score 500 into 40
       jest
         .spyOn(node as any, 'readSessionVariables')
         .mockRejectedValue(new Error('connection refused'));

@@ -38,13 +38,9 @@ export abstract class BaseNode {
     return AppDataSource;
   }
 
-  // EVO-1840: single source of truth for reading a session's variables — this
-  // read was duplicated verbatim in conditional.node.ts and set-variable.node.ts,
-  // each with its own catch. It THROWS on a failed read or a missing session;
-  // the caller decides how to degrade, because the right answer differs:
-  // conditional evaluates against {} (EVO-1913), while set-variable's
-  // increase/decrease must fail — a lost read there would silently rebase the
-  // counter to 0 and clobber the accumulated value.
+  // Throws on a failed read or a missing session; each caller picks its own
+  // degrade policy, since evaluating against {} is safe for conditions but not
+  // for a read-modify-write.
   protected async readSessionVariables(
     sessionId: string,
   ): Promise<Record<string, any>> {

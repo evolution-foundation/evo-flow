@@ -9,14 +9,9 @@ export interface SetVariableNodeInput {
   nodeData: {
     variableName?: string;
     variableValue?: any;
-    // EVO-1840: the config UI (SetVariablePanel) sends `operation` + `value`; the
-    // runtime declared neither, so `operation` was silently dropped and every op
-    // became a plain SET. Declaring them removes the `as any` casts below.
-    // NOTE: this union models what the panel can SEND, not what the runtime
-    // honors. Only set / increase / decrease are implemented; clear, now,
-    // yesterday, tomorrow, time_of_day and random_id still fall through to the
-    // plain-SET branch (writing the raw `value`, usually '') — same
-    // UI-promises-what-the-runtime-drops class as this card, tracked separately.
+    // What the panel can send, not what the runtime honors: only
+    // set/increase/decrease are implemented, the rest fall through to a plain
+    // SET (tracked separately).
     operation?:
       | 'set'
       | 'clear'
@@ -58,9 +53,7 @@ export class SetVariableNode extends BaseNode {
       const isArithmetic =
         operation === 'increase' || operation === 'decrease';
 
-      // EVO-1840: increase/decrease is a read-modify-write, so it needs the
-      // session's current values. Read once, and only when an arithmetic
-      // operation is actually configured (a plain SET must not touch the DB).
+      // increase/decrease is a read-modify-write; a plain SET must not hit the DB.
       const sessionVariables = isArithmetic
         ? await this.loadSessionVariables(input.sessionId)
         : {};
@@ -95,10 +88,8 @@ export class SetVariableNode extends BaseNode {
         input.nodeData.variables &&
         Array.isArray(input.nodeData.variables)
       ) {
-        // Multiple variables. EVO-1840: the array form carries the same
-        // node-level `operation`, so it gets the same arithmetic — otherwise
-        // increase/decrease would keep silently degrading to a plain SET on this
-        // input shape, which is the exact bug this card fixes.
+        // Multiple variables — the array shape carries the same node-level
+        // `operation`, so it gets the same arithmetic.
         for (const variable of input.nodeData.variables) {
           const cleanName = String(variable.name).replace(/^\{\{|\}\}$/g, '');
 
@@ -166,16 +157,11 @@ export class SetVariableNode extends BaseNode {
         return this.createSuccessResult(input, executionTime, variables);
       })
       .catch((error) => {
-        // executionTime is a DURATION everywhere else (it feeds
-        // logNodeExecution/trackNodeExecution); this branch used to report
-        // Date.now(), i.e. an epoch timestamp, as the node's duration.
+        // Elapsed, not Date.now(): this feeds the node telemetry as a duration.
         return this.createErrorResult(error, Date.now() - startTime);
       });
   }
 
-  // EVO-1840: apply the numeric operation the UI offers. The runtime used to
-  // ignore `operation` and do a plain SET, so "increase lead_score by 40" never
-  // accumulated.
   private applyArithmetic(
     name: string,
     rawAmount: any,
@@ -183,10 +169,8 @@ export class SetVariableNode extends BaseNode {
     sessionVariables: Record<string, any>,
     input: SetVariableNodeInput,
   ): number {
-    // The panel's Amount field is a VariableInput WITH a variable picker, and
-    // the executor hands the node its raw nodeData (no interpolation upstream),
-    // so `{{bonus}}` arrives literal. Resolve it against the session before
-    // parsing — otherwise a UI-supported config would abort the whole journey.
+    // The Amount field accepts {{variables}} and the executor passes nodeData
+    // raw, so resolve against the session before parsing.
     const resolvedAmount = this.processVariableValue(rawAmount, {
       ...sessionVariables,
       contactId: input.contactId,
@@ -196,7 +180,6 @@ export class SetVariableNode extends BaseNode {
 
     const delta = this.toFiniteNumber(resolvedAmount);
     if (delta === null) {
-      // EVO-1740 family: fail visibly instead of silently no-op'ing.
       throw new Error(
         `Set Variable ${operation} requires a numeric amount, got ${JSON.stringify(
           rawAmount,
@@ -213,10 +196,8 @@ export class SetVariableNode extends BaseNode {
     return operation === 'increase' ? base + delta : base - delta;
   }
 
-  // An unset variable legitimately starts at 0 (the first increment lands on the
-  // delta itself). A variable that HOLDS a non-numeric value is different: there
-  // is no sane arithmetic for it, and rebasing to 0 would silently destroy the
-  // stored value while reporting success — AC#3 wants that visible.
+  // Unset starts at 0; a variable that holds a non-numeric value has no sane
+  // arithmetic and must not be rebased to 0, which would destroy it.
   private resolveArithmeticBase(
     name: string,
     prior: any,
@@ -238,10 +219,8 @@ export class SetVariableNode extends BaseNode {
     return parsed;
   }
 
-  // Number('') and Number(null) are both 0, which would turn an empty/absent
-  // Amount into a silent "increase by 0" reported as success (the panel even
-  // renders 1 as the placeholder in that state). Treat "no value" — and
-  // booleans, which Number() happily coerces — as not-a-number.
+  // Number('') and Number(null) are 0, so "no value" would read as a valid
+  // amount; booleans coerce too. Treat all of them as not-a-number.
   private toFiniteNumber(value: any): number | null {
     if (value === undefined || value === null || value === '') {
       return null;
@@ -256,12 +235,8 @@ export class SetVariableNode extends BaseNode {
     return Number.isFinite(parsed) ? parsed : null;
   }
 
-  // EVO-1840: read the session's current variables so increase/decrease can
-  // apply arithmetic to the prior value. Deliberately NO catch here: unlike
-  // conditional.node.ts (which degrades to {} so evaluation continues), a failed
-  // read on a read-modify-write would rebase the counter to 0 and silently
-  // clobber the accumulated value (lead_score 500 → 40) while reporting success
-  // — the very silent-success class this card fixes (EVO-1740). Let it throw.
+  // No catch on purpose: degrading to {} would rebase the counter to 0 and
+  // write a wrong value as success.
   private async loadSessionVariables(
     sessionId: string,
   ): Promise<Record<string, any>> {

@@ -684,9 +684,8 @@ export class ConditionalNode extends BaseNode {
     sessionId: string,
   ): Promise<Record<string, any>> {
     try {
-      // EVO-1840: the read itself now lives in BaseNode (it was duplicated here
-      // and in set-variable.node.ts); the degrade-to-{} policy below stays local
-      // because it is specific to condition evaluation.
+      // The read lives in BaseNode; the degrade-to-{} below is policy specific
+      // to condition evaluation.
       return await this.readSessionVariables(sessionId);
     } catch (error: any) {
       // EVO-1913: surface the failure at ERROR level instead of swallowing it
