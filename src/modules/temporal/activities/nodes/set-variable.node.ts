@@ -1,5 +1,7 @@
 import { BaseNode, NodeExecutionResult } from './base.node';
 
+type ArithmeticOperation = 'increase' | 'decrease';
+
 export interface SetVariableNodeInput {
   nodeId: string;
   contactId: string;
@@ -7,6 +9,21 @@ export interface SetVariableNodeInput {
   nodeData: {
     variableName?: string;
     variableValue?: any;
+    // What the panel can send, not what the runtime honors: only
+    // set/increase/decrease are implemented, the rest fall through to a plain
+    // SET (tracked separately).
+    operation?:
+      | 'set'
+      | 'clear'
+      | 'increase'
+      | 'decrease'
+      | 'now'
+      | 'yesterday'
+      | 'tomorrow'
+      | 'time_of_day'
+      | 'random_id';
+    value?: any;
+    category?: string;
     variables?: Array<{
       name: string;
       value: any;
@@ -21,6 +38,8 @@ export class SetVariableNode extends BaseNode {
   }
 
   async execute(input: SetVariableNodeInput): Promise<NodeExecutionResult> {
+    const startTime = Date.now();
+
     return await this.executeWithTiming(input.nodeId, input, async () => {
       const variablesToSet: Record<string, any> = {};
 
@@ -30,28 +49,59 @@ export class SetVariableNode extends BaseNode {
         nodeData: input.nodeData,
       });
 
+      const operation = input.nodeData.operation ?? 'set';
+      const isArithmetic =
+        operation === 'increase' || operation === 'decrease';
+
+      // increase/decrease is a read-modify-write; a plain SET must not hit the DB.
+      const sessionVariables = isArithmetic
+        ? await this.loadSessionVariables(input.sessionId)
+        : {};
+
       // Support both single variable and multiple variables
       if (input.nodeData.variableName) {
         // Extract clean variable name from {{variableName}} format
         const cleanName = input.nodeData.variableName.replace(/^\{\{|\}\}$/g, '');
         // Use value or variableValue
-        const value = (input.nodeData as any).value !== undefined 
-          ? (input.nodeData as any).value 
-          : input.nodeData.variableValue;
-        variablesToSet[cleanName] = value;
-        
+        const value =
+          input.nodeData.value !== undefined
+            ? input.nodeData.value
+            : input.nodeData.variableValue;
+
+        variablesToSet[cleanName] = isArithmetic
+          ? this.applyArithmetic(
+              cleanName,
+              value,
+              operation as ArithmeticOperation,
+              sessionVariables,
+              input,
+            )
+          : value;
+
         this.logger.log('Setting single variable', {
           originalName: input.nodeData.variableName,
           cleanName,
-          value,
+          operation,
+          value: variablesToSet[cleanName],
         });
       } else if (
         input.nodeData.variables &&
         Array.isArray(input.nodeData.variables)
       ) {
-        // Multiple variables
+        // Multiple variables — the array shape carries the same node-level
+        // `operation`, so it gets the same arithmetic.
         for (const variable of input.nodeData.variables) {
-          variablesToSet[variable.name] = variable.value;
+          const cleanName = String(variable.name).replace(/^\{\{|\}\}$/g, '');
+
+          variablesToSet[cleanName] = isArithmetic
+            ? this.applyArithmetic(
+                cleanName,
+                variable.value,
+                operation as ArithmeticOperation,
+                sessionVariables,
+                input,
+              )
+            : variable.value;
         }
       }
 
@@ -107,9 +157,90 @@ export class SetVariableNode extends BaseNode {
         return this.createSuccessResult(input, executionTime, variables);
       })
       .catch((error) => {
-        const executionTime = Date.now();
-        return this.createErrorResult(error, executionTime);
+        // Elapsed, not Date.now(): this feeds the node telemetry as a duration.
+        return this.createErrorResult(error, Date.now() - startTime);
       });
+  }
+
+  private applyArithmetic(
+    name: string,
+    rawAmount: any,
+    operation: ArithmeticOperation,
+    sessionVariables: Record<string, any>,
+    input: SetVariableNodeInput,
+  ): number {
+    // The Amount field accepts {{variables}} and the executor passes nodeData
+    // raw, so resolve against the session before parsing.
+    const resolvedAmount = this.processVariableValue(rawAmount, {
+      ...sessionVariables,
+      contactId: input.contactId,
+      sessionId: input.sessionId,
+      timestamp: new Date().toISOString(),
+    });
+
+    const delta = this.toFiniteNumber(resolvedAmount);
+    if (delta === null) {
+      throw new Error(
+        `Set Variable ${operation} requires a numeric amount, got ${JSON.stringify(
+          rawAmount,
+        )}`,
+      );
+    }
+
+    const base = this.resolveArithmeticBase(
+      name,
+      sessionVariables[name],
+      operation,
+    );
+
+    return operation === 'increase' ? base + delta : base - delta;
+  }
+
+  // Unset starts at 0; a variable that holds a non-numeric value has no sane
+  // arithmetic and must not be rebased to 0, which would destroy it.
+  private resolveArithmeticBase(
+    name: string,
+    prior: any,
+    operation: ArithmeticOperation,
+  ): number {
+    if (prior === undefined || prior === null || prior === '') {
+      return 0;
+    }
+
+    const parsed = this.toFiniteNumber(prior);
+    if (parsed === null) {
+      throw new Error(
+        `Set Variable ${operation} cannot be applied to "${name}": current value ${JSON.stringify(
+          prior,
+        )} is not numeric`,
+      );
+    }
+
+    return parsed;
+  }
+
+  // Number('') and Number(null) are 0, so "no value" would read as a valid
+  // amount; booleans coerce too. Treat all of them as not-a-number.
+  private toFiniteNumber(value: any): number | null {
+    if (value === undefined || value === null || value === '') {
+      return null;
+    }
+
+    if (typeof value === 'boolean') {
+      return null;
+    }
+
+    const parsed = Number(value);
+
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  // No catch on purpose: degrading to {} would rebase the counter to 0 and
+  // write a wrong value as success.
+  private async loadSessionVariables(
+    sessionId: string,
+  ): Promise<Record<string, any>> {
+    return await this.readSessionVariables(sessionId);
   }
 
   private processVariableValue(value: any, context: Record<string, any>): any {
