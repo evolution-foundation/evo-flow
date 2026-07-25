@@ -21,23 +21,29 @@ describe('SetVariableNode', () => {
     // context; stub it out for unit tests.
     jest.spyOn(node as any, 'logNodeError').mockImplementation(() => undefined);
     jest.spyOn((node as any).logger, 'log').mockImplementation(() => undefined);
-    jest.spyOn((node as any).logger, 'warn').mockImplementation(() => undefined);
-    jest.spyOn((node as any).logger, 'error').mockImplementation(() => undefined);
+    jest
+      .spyOn((node as any).logger, 'warn')
+      .mockImplementation(() => undefined);
+    jest
+      .spyOn((node as any).logger, 'error')
+      .mockImplementation(() => undefined);
   });
 
   afterEach(() => jest.restoreAllMocks());
 
   function stubSession(vars: Record<string, any>) {
-    jest
-      .spyOn(node as any, 'loadSessionVariables')
-      .mockResolvedValue(vars);
+    jest.spyOn(node as any, 'loadSessionVariables').mockResolvedValue(vars);
   }
 
   describe('arithmetic', () => {
     it('increase adds the amount to the current numeric value', async () => {
       stubSession({ lead_score: 10 });
       const result = await node.execute(
-        input({ variableName: 'lead_score', operation: 'increase', value: '40' }),
+        input({
+          variableName: 'lead_score',
+          operation: 'increase',
+          value: '40',
+        }),
       );
       expect(result.success).toBe(true);
       expect(result.variables?.lead_score).toBe(50);
@@ -46,7 +52,11 @@ describe('SetVariableNode', () => {
     it('increase from an unset variable starts at 0 (lands on the delta)', async () => {
       stubSession({});
       const result = await node.execute(
-        input({ variableName: 'lead_score', operation: 'increase', value: '40' }),
+        input({
+          variableName: 'lead_score',
+          operation: 'increase',
+          value: '40',
+        }),
       );
       expect(result.variables?.lead_score).toBe(40);
     });
@@ -54,7 +64,11 @@ describe('SetVariableNode', () => {
     it('increase from a null/empty prior value starts at 0', async () => {
       stubSession({ lead_score: null, other: '' });
       const result = await node.execute(
-        input({ variableName: 'lead_score', operation: 'increase', value: '40' }),
+        input({
+          variableName: 'lead_score',
+          operation: 'increase',
+          value: '40',
+        }),
       );
       expect(result.variables?.lead_score).toBe(40);
     });
@@ -62,7 +76,11 @@ describe('SetVariableNode', () => {
     it('decrease subtracts the amount', async () => {
       stubSession({ lead_score: 100 });
       const result = await node.execute(
-        input({ variableName: 'lead_score', operation: 'decrease', value: '30' }),
+        input({
+          variableName: 'lead_score',
+          operation: 'decrease',
+          value: '30',
+        }),
       );
       expect(result.variables?.lead_score).toBe(70);
     });
@@ -70,14 +88,22 @@ describe('SetVariableNode', () => {
     it('accumulates across runs (0 -> +40 -> 40 -> +30 -> 70)', async () => {
       stubSession({});
       const first = await node.execute(
-        input({ variableName: 'lead_score', operation: 'increase', value: '40' }),
+        input({
+          variableName: 'lead_score',
+          operation: 'increase',
+          value: '40',
+        }),
       );
       expect(first.variables?.lead_score).toBe(40);
 
       // second run sees the persisted value
-      stubSession({ lead_score: first.variables?.lead_score });
+      stubSession({ lead_score: first.variables?.lead_score as number });
       const second = await node.execute(
-        input({ variableName: 'lead_score', operation: 'increase', value: '30' }),
+        input({
+          variableName: 'lead_score',
+          operation: 'increase',
+          value: '30',
+        }),
       );
       expect(second.variables?.lead_score).toBe(70);
     });
@@ -145,7 +171,11 @@ describe('SetVariableNode', () => {
     it('a non-numeric amount fails visibly', async () => {
       stubSession({ lead_score: 10 });
       const result = await node.execute(
-        input({ variableName: 'lead_score', operation: 'increase', value: 'abc' }),
+        input({
+          variableName: 'lead_score',
+          operation: 'increase',
+          value: 'abc',
+        }),
       );
       expect(result.success).toBe(false);
       expect(result.error).toContain('numeric amount');
@@ -163,7 +193,11 @@ describe('SetVariableNode', () => {
     it('a null amount fails instead of incrementing by 0', async () => {
       stubSession({ lead_score: 10 });
       const result = await node.execute(
-        input({ variableName: 'lead_score', operation: 'increase', value: null }),
+        input({
+          variableName: 'lead_score',
+          operation: 'increase',
+          value: null,
+        }),
       );
       expect(result.success).toBe(false);
     });
@@ -183,7 +217,11 @@ describe('SetVariableNode', () => {
     it('a non-numeric CURRENT value fails instead of being clobbered to the delta', async () => {
       stubSession({ lead_score: 'not-a-number' });
       const result = await node.execute(
-        input({ variableName: 'lead_score', operation: 'increase', value: '40' }),
+        input({
+          variableName: 'lead_score',
+          operation: 'increase',
+          value: '40',
+        }),
       );
       expect(result.success).toBe(false);
       expect(result.error).toContain('not numeric');
@@ -196,7 +234,11 @@ describe('SetVariableNode', () => {
         .spyOn(node as any, 'readSessionVariables')
         .mockRejectedValue(new Error('connection refused'));
       const result = await node.execute(
-        input({ variableName: 'lead_score', operation: 'increase', value: '40' }),
+        input({
+          variableName: 'lead_score',
+          operation: 'increase',
+          value: '40',
+        }),
       );
       expect(result.success).toBe(false);
       expect(result.variables?.lead_score).toBeUndefined();
@@ -205,7 +247,11 @@ describe('SetVariableNode', () => {
     it('reports the failure duration, not an epoch timestamp', async () => {
       stubSession({ lead_score: 10 });
       const result = await node.execute(
-        input({ variableName: 'lead_score', operation: 'increase', value: 'abc' }),
+        input({
+          variableName: 'lead_score',
+          operation: 'increase',
+          value: 'abc',
+        }),
       );
       expect(result.success).toBe(false);
       expect(result.executionTime).toBeGreaterThanOrEqual(0);

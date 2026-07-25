@@ -50,8 +50,7 @@ export class SetVariableNode extends BaseNode {
       });
 
       const operation = input.nodeData.operation ?? 'set';
-      const isArithmetic =
-        operation === 'increase' || operation === 'decrease';
+      const isArithmetic = operation === 'increase' || operation === 'decrease';
 
       // increase/decrease is a read-modify-write; a plain SET must not hit the DB.
       const sessionVariables = isArithmetic
@@ -61,7 +60,10 @@ export class SetVariableNode extends BaseNode {
       // Support both single variable and multiple variables
       if (input.nodeData.variableName) {
         // Extract clean variable name from {{variableName}} format
-        const cleanName = input.nodeData.variableName.replace(/^\{\{|\}\}$/g, '');
+        const cleanName = input.nodeData.variableName.replace(
+          /^\{\{|\}\}$/g,
+          '',
+        );
         // Use value or variableValue
         const value =
           input.nodeData.value !== undefined
