@@ -182,6 +182,27 @@ export class SegmentClickHouseQueryBuilderService {
           useArgMax = mutableFields.includes(userPropNode.path);
         }
 
+        if (isCustomAttribute) {
+          const attributeOperator = userPropNode.operator
+            ? typeof userPropNode.operator === 'object'
+              ? userPropNode.operator.type
+              : userPropNode.operator
+            : '';
+          const attributeValue = userPropNode.operator
+            ? typeof userPropNode.operator === 'object'
+              ? String(userPropNode.operator.value || '')
+              : String(userPropNode.value || '')
+            : '';
+
+          return this.buildCustomAttributeSubQuery(
+            stateId,
+            segment,
+            customAttributeName,
+            attributeOperator,
+            attributeValue,
+          );
+        }
+
         // Aplicar operador
         if (userPropNode.operator) {
           operator =
@@ -316,32 +337,6 @@ export class SegmentClickHouseQueryBuilderService {
               .replace(/\s+/g, ' ')
               .trim();
           }
-        }
-
-        // EVO-1901 (D12): custom attributes are stored as delta events
-        // (`contact.custom_attribute.changed` with { attributeName, attributeValue,
-        // changeType }), never as a flat/nested `traits` key — so the generic
-        // extraction above matches zero rows and segments computed 0 members. Read
-        // the attribute's change stream instead and argMax the latest value (a
-        // `removed` change clears it). generateArgMaxValidation then applies the
-        // operator/value comparison over this argMaxValue.
-        if (isCustomAttribute) {
-          condition = `event_name = 'contact.custom_attribute.changed' AND JSONExtractString(traits, 'attributeName') = '${this.escapeSql(customAttributeName)}'`;
-          argMaxValue = `
-            CASE
-              WHEN contact_or_anonymous_id IN (
-                SELECT DISTINCT contact_or_anonymous_id
-                FROM contact_events
-                WHERE event_name = 'contact_deleted'
-                GROUP BY contact_or_anonymous_id
-                HAVING argMax(occurred_at, occurred_at) > 0
-              ) THEN ''
-              WHEN JSONExtractString(traits, 'changeType') = 'removed' THEN ''
-              ELSE JSONExtractString(traits, 'attributeValue')
-            END
-          `
-            .replace(/\s+/g, ' ')
-            .trim();
         }
 
         // Para campos mutáveis, incluir informação do operador e valor para validação posterior
@@ -755,101 +750,13 @@ export class SegmentClickHouseQueryBuilderService {
           return [];
         }
 
-        // For CustomAttribute, check current value using argMax of all change events
-        const operator = customAttrNode.operator?.type || 'Equals';
-        const value = customAttrNode.operator?.value || '';
-        const attributeName = this.escapeSql(customAttrNode.attributeName);
-        const escapedValue = this.escapeSql(value);
-
-        // For NotEquals, NotContains, and similar "negative" conditions, we need to include ALL contacts
-        // not just those who have custom attribute events
-        if (operator === 'NotEquals' || operator === 'NotContains') {
-          return [
-            {
-              stateId,
-              condition: `1 = 1`, // Include all contacts initially
-              argMaxValue: `
-                CASE
-                  WHEN contact_or_anonymous_id IN (
-                    SELECT DISTINCT contact_or_anonymous_id
-                    FROM contact_events
-                    WHERE event_name = 'contact_deleted'
-                    GROUP BY contact_or_anonymous_id
-                    HAVING argMax(occurred_at, occurred_at) > 0
-                  ) THEN 'false'
-                  WHEN contact_or_anonymous_id IN (
-                    SELECT DISTINCT contact_or_anonymous_id
-                    FROM contact_events
-                    WHERE event_name IN ('contact.custom_attribute.changed', 'custom_attribute_changed')
-                      AND JSONExtractString(traits, 'attributeName') = '${attributeName}'
-                    GROUP BY contact_or_anonymous_id
-                    HAVING argMax(
-                      CASE
-                        WHEN JSONExtractString(traits, 'changeType') = 'removed' THEN ''
-                        ELSE JSONExtractString(traits, 'attributeValue')
-                      END,
-                      occurred_at
-                    ) ${operator === 'NotEquals' ? '=' : 'LIKE'} ${operator === 'NotEquals' ? `'${escapedValue}'` : `'%${escapedValue}%'`}
-                  ) THEN 'false'
-                  ELSE 'true'
-                END
-              `,
-              uniqValue: `contact_or_anonymous_id`,
-              eventTimeExpression: `occurred_at`,
-              recordMessageId: false,
-              joinPriorStateValue: false,
-              type: 'segment' as const,
-              computedPropertyId: segment.id,
-              validationInfo: {
-                operator: 'Equals',
-                value: 'true',
-                extractPath: 'argMax',
-              },
-            },
-          ];
-        }
-
-        // For positive conditions (Equals, Contains, etc.), use the original logic.
-        // The custom-attribute change is an identify-DTO event: the CRM stores the
-        // canonical dotted name and the payload in the `traits` column, not
-        // `properties` (EVO-1839). Accept both event-name forms; read from traits.
-        const condition = `event_name IN ('contact.custom_attribute.changed', 'custom_attribute_changed') AND JSONExtractString(traits, 'attributeName') = '${attributeName}'`;
-
-        // Get the current value using argMax - handle removed attributes as empty
-        const argMaxValue = `
-          CASE
-            WHEN contact_or_anonymous_id IN (
-              SELECT DISTINCT contact_or_anonymous_id
-              FROM contact_events
-              WHERE event_name = 'contact_deleted'
-              GROUP BY contact_or_anonymous_id
-              HAVING argMax(occurred_at, occurred_at) > 0
-            ) THEN ''
-            WHEN JSONExtractString(traits, 'changeType') = 'removed' THEN ''
-            ELSE JSONExtractString(traits, 'attributeValue')
-          END
-        `
-          .replace(/\s+/g, ' ')
-          .trim();
-
-        return [
-          {
-            stateId,
-            condition,
-            argMaxValue,
-            uniqValue: `message_id`,
-            eventTimeExpression: `occurred_at`,
-            recordMessageId: false,
-            joinPriorStateValue: false,
-            type: 'segment' as const,
-            computedPropertyId: segment.id,
-            validationInfo: {
-              operator,
-              value,
-              extractPath: 'argMax',
-            },
-          },
-        ];
+        return this.buildCustomAttributeSubQuery(
+          stateId,
+          segment,
+          customAttrNode.attributeName,
+          customAttrNode.operator?.type || 'Equals',
+          customAttrNode.operator?.value || '',
+        );
       }
 
       case SegmentNodeType.And:
@@ -882,6 +789,133 @@ export class SegmentClickHouseQueryBuilderService {
         this.logger.warn(`Unsupported segment node type: ${node.type}`);
         return [];
     }
+  }
+
+  /**
+   * Builds the sub-query for a custom attribute condition, shared by the
+   * dedicated CustomAttribute node and the legacy UserProperty
+   * `customAttributes[.<attr>]` path. Custom attributes are stored as delta
+   * events (`contact.custom_attribute.changed`/`custom_attribute_changed`
+   * with `{ attributeName, attributeValue, changeType }`), never as a flat
+   * `traits` key, so a contact only gets a row in the state table for
+   * events matching this attributeName.
+   *
+   * NotEquals/NotContains/NotExists are "negative" conditions that must
+   * also match contacts who never had an event for this attribute — a
+   * contact with no event trivially satisfies "not equal to X" or "has no
+   * value". The per-event condition alone can't express that, so these
+   * three include every contact up front and use a subquery to flip back
+   * to false the ones for whom the underlying positive comparison holds.
+   */
+  private buildCustomAttributeSubQuery(
+    stateId: string,
+    segment: Segment,
+    attributeName: string,
+    operator: string,
+    value: string,
+  ): StateSubQuery[] {
+    const escapedAttributeName = this.escapeSql(attributeName);
+    const escapedValue = this.escapeSql(value);
+    const negatedOperators = ['NotEquals', 'NotContains', 'NotExists'];
+
+    if (negatedOperators.includes(operator)) {
+      const currentValueExpr = `
+        CASE
+          WHEN JSONExtractString(traits, 'changeType') = 'removed' THEN ''
+          ELSE JSONExtractString(traits, 'attributeValue')
+        END
+      `
+        .replace(/\s+/g, ' ')
+        .trim();
+
+      const positiveComparison =
+        operator === 'NotEquals'
+          ? `= '${escapedValue}'`
+          : operator === 'NotContains'
+            ? `LIKE '%${escapedValue}%'`
+            : `!= ''`; // NotExists: flip back to false when a current value exists
+
+      return [
+        {
+          stateId,
+          condition: `1 = 1`, // Include all contacts initially
+          argMaxValue: `
+            CASE
+              WHEN contact_or_anonymous_id IN (
+                SELECT DISTINCT contact_or_anonymous_id
+                FROM contact_events
+                WHERE event_name = 'contact_deleted'
+                GROUP BY contact_or_anonymous_id
+                HAVING argMax(occurred_at, occurred_at) > 0
+              ) THEN 'false'
+              WHEN contact_or_anonymous_id IN (
+                SELECT DISTINCT contact_or_anonymous_id
+                FROM contact_events
+                WHERE event_name IN ('contact.custom_attribute.changed', 'custom_attribute_changed')
+                  AND JSONExtractString(traits, 'attributeName') = '${escapedAttributeName}'
+                GROUP BY contact_or_anonymous_id
+                HAVING argMax(${currentValueExpr}, occurred_at) ${positiveComparison}
+              ) THEN 'false'
+              ELSE 'true'
+            END
+          `,
+          uniqValue: `contact_or_anonymous_id`,
+          eventTimeExpression: `occurred_at`,
+          recordMessageId: false,
+          joinPriorStateValue: false,
+          type: 'segment' as const,
+          computedPropertyId: segment.id,
+          validationInfo: {
+            operator: 'Equals',
+            value: 'true',
+            extractPath: 'argMax',
+          },
+        },
+      ];
+    }
+
+    // Positive conditions (Equals, Contains, Exists, etc.): a contact
+    // without a matching event correctly has no row and is excluded. The
+    // custom-attribute change is an identify-DTO event: the CRM stores the
+    // canonical dotted name and the payload in the `traits` column, not
+    // `properties`. Accept both event-name forms; read from traits.
+    const condition = `event_name IN ('contact.custom_attribute.changed', 'custom_attribute_changed') AND JSONExtractString(traits, 'attributeName') = '${escapedAttributeName}'`;
+
+    // Get the current value using argMax - handle removed attributes as empty
+    const argMaxValue = `
+      CASE
+        WHEN contact_or_anonymous_id IN (
+          SELECT DISTINCT contact_or_anonymous_id
+          FROM contact_events
+          WHERE event_name = 'contact_deleted'
+          GROUP BY contact_or_anonymous_id
+          HAVING argMax(occurred_at, occurred_at) > 0
+        ) THEN ''
+        WHEN JSONExtractString(traits, 'changeType') = 'removed' THEN ''
+        ELSE JSONExtractString(traits, 'attributeValue')
+      END
+    `
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    return [
+      {
+        stateId,
+        condition,
+        argMaxValue,
+        uniqValue: `message_id`,
+        eventTimeExpression: `occurred_at`,
+        recordMessageId: false,
+        joinPriorStateValue: false,
+        type: 'segment' as const,
+        computedPropertyId: segment.id,
+        validationInfo: {
+          operator,
+          value,
+          extractPath: 'argMax',
+        },
+      },
+    ];
   }
 
   /**

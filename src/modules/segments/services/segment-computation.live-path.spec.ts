@@ -53,10 +53,11 @@ describe('EVO-1901 live segment recompute SQL builder', () => {
 
     const [subQuery] = builder.segmentNodeToStateSubQuery(segment, node);
 
-    // Selects the attribute's change events…
-    expect(subQuery.condition).toContain(
-      "event_name = 'contact.custom_attribute.changed'",
-    );
+    // Selects the attribute's change events, accepting both the canonical
+    // and the legacy event-name form (same as the dedicated CustomAttribute
+    // node — the two entry points now share one builder)…
+    expect(subQuery.condition).toContain('contact.custom_attribute.changed');
+    expect(subQuery.condition).toContain('custom_attribute_changed');
     expect(subQuery.condition).toContain(
       "JSONExtractString(traits, 'attributeName') = 'tier'",
     );
@@ -229,5 +230,73 @@ describe('segment recompute SQL builder escapes user-controlled values', () => {
 
     expect(validation).not.toContain('0 OR 1=1');
     expect(validation).toContain('null');
+  });
+});
+
+describe('custom attribute sub-query is shared between both entry points', () => {
+  const builder = new SegmentClickHouseQueryBuilderService();
+
+  it('generates the same NotEquals sub-query for the CustomAttribute node and the UserProperty path', () => {
+    const segment = { id: 'seg-1' } as any;
+
+    const [fromCustomAttributeNode] = builder.segmentNodeToStateSubQuery(
+      segment,
+      {
+        id: 'n1',
+        type: SegmentNodeType.CustomAttribute,
+        attributeName: 'tier',
+        operator: { type: 'NotEquals', value: 'platinum' },
+      } as any,
+    );
+    const [fromUserPropertyPath] = builder.segmentNodeToStateSubQuery(
+      segment,
+      {
+        id: 'n2',
+        type: SegmentNodeType.UserProperty,
+        path: 'customAttributes.tier',
+        operator: { type: 'NotEquals', value: 'platinum' },
+      } as any,
+    );
+
+    expect(fromUserPropertyPath.condition).toBe(fromCustomAttributeNode.condition);
+    expect(fromUserPropertyPath.argMaxValue).toBe(
+      fromCustomAttributeNode.argMaxValue,
+    );
+    // both include every contact up front (the fix this test locks in)…
+    expect(fromUserPropertyPath.condition).toBe('1 = 1');
+  });
+
+  it('a NotExists condition includes a contact who never triggered the attribute event', () => {
+    const segment = { id: 'seg-1' } as any;
+    const node = {
+      id: 'n1',
+      type: SegmentNodeType.CustomAttribute,
+      attributeName: 'tier',
+      operator: { type: 'NotExists', value: '' },
+    } as any;
+
+    const [subQuery] = builder.segmentNodeToStateSubQuery(segment, node);
+
+    // Doesn't filter contact_events down to just this attribute's events —
+    // a contact with zero events for it still gets a row and defaults to
+    // matching (only flipped to non-matching if they currently have a value).
+    expect(subQuery.condition).toBe('1 = 1');
+    expect(subQuery.argMaxValue).toContain("THEN 'false'");
+    expect(subQuery.argMaxValue).toContain("ELSE 'true'");
+  });
+
+  it('an Exists condition still only matches contacts with an event (no regression)', () => {
+    const segment = { id: 'seg-1' } as any;
+    const node = {
+      id: 'n1',
+      type: SegmentNodeType.CustomAttribute,
+      attributeName: 'tier',
+      operator: { type: 'Exists', value: '' },
+    } as any;
+
+    const [subQuery] = builder.segmentNodeToStateSubQuery(segment, node);
+
+    expect(subQuery.condition).toContain('contact.custom_attribute.changed');
+    expect(subQuery.condition).not.toBe('1 = 1');
   });
 });
