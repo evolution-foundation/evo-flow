@@ -383,6 +383,32 @@ describe('CrmClientService', () => {
     });
   });
 
+  // CRM-209: pins the flat-endpoint URL the Journey/Campaign template node depends
+  // on — node specs mock this client, so only this test catches a URL drift.
+  describe('getInboxMessageTemplates — Journey/Campaign template node contract', () => {
+    it('GETs the flat /message_templates?inbox_id=... endpoint, not the removed nested route', async () => {
+      fetchMock.mockResolvedValueOnce(
+        buildFetchResponse({
+          status: 200,
+          body: { success: true, data: [{ id: 'tpl-1', name: 'welcome' }] },
+        }),
+      );
+
+      const result = await service.getInboxMessageTemplates('inbox-1');
+
+      const [url, init] = fetchMock.mock.calls[0];
+      expect(url).toBe(
+        'http://crm-test.local/api/v1/message_templates?inbox_id=inbox-1&active=true&per_page=-1',
+      );
+      expect(init.method).toBe('GET');
+      // Guard against the removed EVO-1716 nested route re-appearing.
+      expect(url).not.toContain('/inboxes/inbox-1/message_templates');
+      // Envelope: templates land under data (data.data at the node); resolveTemplate reads it.
+      expect(result.success).toBe(true);
+      expect(result.data.data[0].id).toBe('tpl-1');
+    });
+  });
+
   describe('auth headers', () => {
     it('uses X-Service-Token header by default (s2s)', async () => {
       fetchMock.mockResolvedValueOnce(

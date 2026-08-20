@@ -659,7 +659,7 @@ export class CrmClientService {
           }
 
           if (response.status === 404) {
-            throw new Error('CRM Resource not found (conversation)');
+            throw new Error(`CRM Resource not found (${context.nodeType})`);
           }
 
           if (response.status === 422) {
@@ -840,7 +840,9 @@ export class CrmClientService {
   async getInboxMessageTemplates(
     inboxId: string,
   ): Promise<CrmApiResponse<any>> {
-    const url = `${this.baseURL}/api/v1/inboxes/${inboxId}/message_templates?active=true&per_page=-1`;
+    // CRM-209: EVO-1716 removed the inbox-nested GET route — the flat endpoint
+    // with an inbox_id filter is the only server-side listing left.
+    const url = `${this.baseURL}/api/v1/message_templates?inbox_id=${encodeURIComponent(inboxId)}&active=true&per_page=-1`;
     return this.executeRequest(
       url,
       { method: 'GET' },
