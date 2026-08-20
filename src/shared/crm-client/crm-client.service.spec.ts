@@ -383,11 +383,8 @@ describe('CrmClientService', () => {
     });
   });
 
-  // CRM-209: pins the HTTP contract the Journey/Campaign template node depends on.
-  // The EVO-1716 cutover removed the inbox-nested GET route; getInboxMessageTemplates
-  // must call the FLAT endpoint with inbox_id as a query param. Mocking the client
-  // method in the node spec can't catch a URL drift — this can (the nested URL now
-  // 404s → resolveTemplate sees success:false → the node silently skips the send).
+  // CRM-209: pins the flat-endpoint URL the Journey/Campaign template node depends
+  // on — node specs mock this client, so only this test catches a URL drift.
   describe('getInboxMessageTemplates — Journey/Campaign template node contract', () => {
     it('GETs the flat /message_templates?inbox_id=... endpoint, not the removed nested route', async () => {
       fetchMock.mockResolvedValueOnce(
