@@ -53,10 +53,8 @@ describe('EVO-1901 live segment recompute SQL builder', () => {
 
     const [subQuery] = builder.segmentNodeToStateSubQuery(segment, node);
 
-    // Selects the attribute's change events…
-    expect(subQuery.condition).toContain(
-      "event_name = 'contact.custom_attribute.changed'",
-    );
+    expect(subQuery.condition).toContain('contact.custom_attribute.changed');
+    expect(subQuery.condition).toContain('custom_attribute_changed');
     expect(subQuery.condition).toContain(
       "JSONExtractString(traits, 'attributeName') = 'tier'",
     );
@@ -132,5 +130,228 @@ describe('EVO-1901 live segment recompute SQL builder', () => {
     expect(subQuery.argMaxValue).not.toContain(
       "JSONExtractString(traits, 'customAttributes.tier')",
     );
+  });
+});
+
+describe('segment recompute SQL builder escapes user-controlled values', () => {
+  const builder = new SegmentClickHouseQueryBuilderService();
+
+  it('escapes a single quote in a CustomAttribute value instead of splicing it into the SQL', () => {
+    const segment = { id: 'seg-1' } as any;
+    const node = {
+      id: 'n1',
+      type: SegmentNodeType.CustomAttribute,
+      attributeName: 'tier',
+      operator: { type: 'Equals', value: `platinum' OR '1'='1` },
+    } as any;
+
+    const [subQuery] = builder.segmentNodeToStateSubQuery(segment, node);
+
+    expect(subQuery.condition).not.toContain(`platinum' OR '1'='1`);
+    expect(subQuery.validationInfo?.value).toBe(`platinum' OR '1'='1`);
+  });
+
+  it('escapes a single quote in the attributeName used to filter events', () => {
+    const segment = { id: 'seg-1' } as any;
+    const node = {
+      id: 'n1',
+      type: SegmentNodeType.CustomAttribute,
+      attributeName: `tier' OR '1'='1`,
+      operator: { type: 'Equals', value: 'platinum' },
+    } as any;
+
+    const [subQuery] = builder.segmentNodeToStateSubQuery(segment, node);
+
+    expect(subQuery.condition).not.toContain(`tier' OR '1'='1`);
+    expect(subQuery.condition).toContain(`tier'' OR ''1''=''1`);
+  });
+
+  it('escapes a single quote in a Performed event property path and value', () => {
+    const segment = { id: 'seg-1' } as any;
+    const node = {
+      id: 'n1',
+      type: SegmentNodeType.Performed,
+      event: 'order_placed',
+      properties: [
+        {
+          path: `plan' OR '1'='1`,
+          operator: { type: 'Equals', value: `gold' OR '1'='1` },
+        },
+      ],
+    } as any;
+
+    const [subQuery] = builder.segmentNodeToStateSubQuery(segment, node);
+
+    expect(subQuery.condition).not.toContain(`plan' OR '1'='1`);
+    expect(subQuery.condition).not.toContain(`gold' OR '1'='1`);
+  });
+
+  it('escapes a single quote in a Label labelId', () => {
+    const segment = { id: 'seg-1' } as any;
+    const node = {
+      id: 'n1',
+      type: SegmentNodeType.Label,
+      labelId: `vip' OR '1'='1`,
+      condition: 'has',
+    } as any;
+
+    const [subQuery] = builder.segmentNodeToStateSubQuery(segment, node);
+
+    expect(subQuery.condition).not.toContain(`vip' OR '1'='1`);
+  });
+
+  it('escapes a single quote in a WhatsApp templateId', () => {
+    const segment = { id: 'seg-1' } as any;
+    const node = {
+      id: 'n1',
+      type: SegmentNodeType.WhatsApp,
+      templateId: `welcome' OR '1'='1`,
+    } as any;
+
+    const [subQuery] = builder.segmentNodeToStateSubQuery(segment, node);
+
+    expect(subQuery.condition).not.toContain(`welcome' OR '1'='1`);
+  });
+
+  it('falls back to a null numeric literal for a non-numeric GreaterThan value, instead of splicing raw text', () => {
+    const segment = { id: 'seg-1' } as any;
+    const node = {
+      id: 'n1',
+      type: SegmentNodeType.UserProperty,
+      path: 'leadScore',
+      operator: { type: 'GreaterThan', value: '0 OR 1=1' },
+    } as any;
+
+    const [subQuery] = builder.segmentNodeToStateSubQuery(segment, node);
+    const validation = builder.generateArgMaxValidation(subQuery);
+
+    expect(validation).not.toContain('0 OR 1=1');
+    expect(validation).toContain('null');
+  });
+});
+
+describe('custom attribute sub-query is shared between both entry points', () => {
+  const builder = new SegmentClickHouseQueryBuilderService();
+
+  it('generates the same NotEquals sub-query for the CustomAttribute node and the UserProperty path', () => {
+    const segment = { id: 'seg-1' } as any;
+
+    const [fromCustomAttributeNode] = builder.segmentNodeToStateSubQuery(
+      segment,
+      {
+        id: 'n1',
+        type: SegmentNodeType.CustomAttribute,
+        attributeName: 'tier',
+        operator: { type: 'NotEquals', value: 'platinum' },
+      } as any,
+    );
+    const [fromUserPropertyPath] = builder.segmentNodeToStateSubQuery(
+      segment,
+      {
+        id: 'n2',
+        type: SegmentNodeType.UserProperty,
+        path: 'customAttributes.tier',
+        operator: { type: 'NotEquals', value: 'platinum' },
+      } as any,
+    );
+
+    expect(fromUserPropertyPath.condition).toBe(fromCustomAttributeNode.condition);
+    expect(fromUserPropertyPath.argMaxValue).toBe(
+      fromCustomAttributeNode.argMaxValue,
+    );
+    expect(fromUserPropertyPath.condition).toBe('1 = 1');
+  });
+
+  it('a NotExists condition includes a contact who never triggered the attribute event', () => {
+    const segment = { id: 'seg-1' } as any;
+    const node = {
+      id: 'n1',
+      type: SegmentNodeType.CustomAttribute,
+      attributeName: 'tier',
+      operator: { type: 'NotExists', value: '' },
+    } as any;
+
+    const [subQuery] = builder.segmentNodeToStateSubQuery(segment, node);
+
+    expect(subQuery.condition).toBe('1 = 1');
+    expect(subQuery.argMaxValue).toContain("THEN 'false'");
+    expect(subQuery.argMaxValue).toContain("ELSE 'true'");
+  });
+
+  it('an Exists condition still only matches contacts with an event (no regression)', () => {
+    const segment = { id: 'seg-1' } as any;
+    const node = {
+      id: 'n1',
+      type: SegmentNodeType.CustomAttribute,
+      attributeName: 'tier',
+      operator: { type: 'Exists', value: '' },
+    } as any;
+
+    const [subQuery] = builder.segmentNodeToStateSubQuery(segment, node);
+
+    expect(subQuery.condition).toContain('contact.custom_attribute.changed');
+    expect(subQuery.condition).not.toBe('1 = 1');
+  });
+});
+
+describe('remaining user-controlled interpolation points fail closed (CRM-60 review)', () => {
+  const builder = new SegmentClickHouseQueryBuilderService();
+
+  it('maps known times operators and refuses an unmapped one instead of returning it raw', () => {
+    expect(builder.getClickHouseOperator('GreaterThanOrEqual')).toBe('>=');
+    expect(builder.getClickHouseOperator(`= 0 OR 1=1 --`)).toBeNull();
+  });
+
+  it('strips quote and backslash from the node id embedded in the state id', () => {
+    const segment = { id: 'seg-1' } as any;
+
+    expect(builder.generateStateId(segment, `n1' OR '1'='1`)).toBe(
+      'seg-1_n1 OR 1=1',
+    );
+  });
+
+  it('a RandomBucket percent of 0 selects an empty bucket; a non-numeric one falls back to 50%', () => {
+    const segment = { id: 'seg-1' } as any;
+
+    const [zeroBucket] = builder.segmentNodeToStateSubQuery(segment, {
+      id: 'n1',
+      type: SegmentNodeType.RandomBucket,
+      percent: 0,
+    } as any);
+    const [defaultBucket] = builder.segmentNodeToStateSubQuery(segment, {
+      id: 'n2',
+      type: SegmentNodeType.RandomBucket,
+      percent: 'abc',
+    } as any);
+
+    expect(zeroBucket.condition).toContain('< 0');
+    expect(defaultBucket.condition).toContain('< 50');
+  });
+
+  it('does not resolve prototype properties when mapping a message event name', () => {
+    const segment = { id: 'seg-1' } as any;
+    const node = {
+      id: 'n1',
+      type: SegmentNodeType.WhatsApp,
+      event: 'toString',
+    } as any;
+
+    const [subQuery] = builder.segmentNodeToStateSubQuery(segment, node);
+
+    expect(subQuery.condition).toBe(`event_name = 'toString'`);
+  });
+
+  it('escapes LIKE wildcards in a Contains value so % only matches itself', () => {
+    const segment = { id: 'seg-1' } as any;
+    const node = {
+      id: 'n1',
+      type: SegmentNodeType.UserProperty,
+      path: 'plan',
+      operator: { type: 'Contains', value: '50%' },
+    } as any;
+
+    const [subQuery] = builder.segmentNodeToStateSubQuery(segment, node);
+
+    expect(subQuery.condition).toContain(`LIKE '%50\\\\%%'`);
   });
 });

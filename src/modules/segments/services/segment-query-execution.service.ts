@@ -65,6 +65,18 @@ export class SegmentQueryExecutionService {
     }
 
     for (const subQuery of subQueryData) {
+      // Both values come from the user-authored definition: an unmapped
+      // operator or non-numeric times must fail closed (match nothing),
+      // never reach the SQL raw.
+      const countOperator = subQuery.timesOperator
+        ? this.queryBuilder.getClickHouseOperator(subQuery.timesOperator)
+        : null;
+      const expectedTimes = Number(subQuery.expectedTimes);
+      const countComparison =
+        countOperator && Number.isFinite(expectedTimes)
+          ? `event_count ${countOperator} ${expectedTimes}`
+          : '0';
+
       const query =
         subQuery.useCountQuery &&
         subQuery.timesOperator &&
@@ -77,7 +89,7 @@ export class SegmentQueryExecutionService {
               state_id,
               contact_or_anonymous_id,
               argMaxState(
-                CASE WHEN event_count ${this.queryBuilder.getClickHouseOperator(subQuery.timesOperator)} ${subQuery.expectedTimes}
+                CASE WHEN ${countComparison}
                      THEN 'true'
                      ELSE 'false'
                 END,
