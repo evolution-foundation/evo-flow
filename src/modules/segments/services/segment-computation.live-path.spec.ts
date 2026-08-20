@@ -293,3 +293,65 @@ describe('custom attribute sub-query is shared between both entry points', () =>
     expect(subQuery.condition).not.toBe('1 = 1');
   });
 });
+
+describe('remaining user-controlled interpolation points fail closed (CRM-60 review)', () => {
+  const builder = new SegmentClickHouseQueryBuilderService();
+
+  it('maps known times operators and refuses an unmapped one instead of returning it raw', () => {
+    expect(builder.getClickHouseOperator('GreaterThanOrEqual')).toBe('>=');
+    expect(builder.getClickHouseOperator(`= 0 OR 1=1 --`)).toBeNull();
+  });
+
+  it('strips quote and backslash from the node id embedded in the state id', () => {
+    const segment = { id: 'seg-1' } as any;
+
+    expect(builder.generateStateId(segment, `n1' OR '1'='1`)).toBe(
+      'seg-1_n1 OR 1=1',
+    );
+  });
+
+  it('a RandomBucket percent of 0 selects an empty bucket; a non-numeric one falls back to 50%', () => {
+    const segment = { id: 'seg-1' } as any;
+
+    const [zeroBucket] = builder.segmentNodeToStateSubQuery(segment, {
+      id: 'n1',
+      type: SegmentNodeType.RandomBucket,
+      percent: 0,
+    } as any);
+    const [defaultBucket] = builder.segmentNodeToStateSubQuery(segment, {
+      id: 'n2',
+      type: SegmentNodeType.RandomBucket,
+      percent: 'abc',
+    } as any);
+
+    expect(zeroBucket.condition).toContain('< 0');
+    expect(defaultBucket.condition).toContain('< 50');
+  });
+
+  it('does not resolve prototype properties when mapping a message event name', () => {
+    const segment = { id: 'seg-1' } as any;
+    const node = {
+      id: 'n1',
+      type: SegmentNodeType.WhatsApp,
+      event: 'toString',
+    } as any;
+
+    const [subQuery] = builder.segmentNodeToStateSubQuery(segment, node);
+
+    expect(subQuery.condition).toBe(`event_name = 'toString'`);
+  });
+
+  it('escapes LIKE wildcards in a Contains value so % only matches itself', () => {
+    const segment = { id: 'seg-1' } as any;
+    const node = {
+      id: 'n1',
+      type: SegmentNodeType.UserProperty,
+      path: 'plan',
+      operator: { type: 'Contains', value: '50%' },
+    } as any;
+
+    const [subQuery] = builder.segmentNodeToStateSubQuery(segment, node);
+
+    expect(subQuery.condition).toContain(`LIKE '%50\\\\%%'`);
+  });
+});

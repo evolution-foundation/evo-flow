@@ -46,6 +46,14 @@ export class SegmentClickHouseQueryBuilderService {
     return Number.isFinite(num) ? String(num) : 'null';
   }
 
+  // LIKE patterns treat %, _ and \ specially; escape them so a user value
+  // only ever matches itself as a substring.
+  private escapeLike(value: unknown): string {
+    return this.escapeSql(
+      String(value ?? '').replace(/[\\%_]/g, (ch) => `\\${ch}`),
+    );
+  }
+
   /**
    * Convert segment nodes to state sub-queries using modular builders
    */
@@ -235,6 +243,7 @@ export class SegmentClickHouseQueryBuilderService {
               // Para campos imutáveis: aplicar condição diretamente
               const extractFunc = `JSONExtractString(traits, '${this.escapeSql(extractPath)}')`;
               const escapedValue = this.escapeSql(value);
+              const likeValue = this.escapeLike(value);
               const numericValue = this.escapeNumeric(value);
 
               switch (operator) {
@@ -245,10 +254,10 @@ export class SegmentClickHouseQueryBuilderService {
                   condition = `${extractFunc} != '${escapedValue}'`;
                   break;
                 case 'Contains':
-                  condition = `${extractFunc} LIKE '%${escapedValue}%'`;
+                  condition = `${extractFunc} LIKE '%${likeValue}%'`;
                   break;
                 case 'NotContains':
-                  condition = `${extractFunc} NOT LIKE '%${escapedValue}%'`;
+                  condition = `${extractFunc} NOT LIKE '%${likeValue}%'`;
                   break;
                 case 'GreaterThan':
                   condition = `toFloat64OrNull(${extractFunc}) > ${numericValue}`;
@@ -373,6 +382,7 @@ export class SegmentClickHouseQueryBuilderService {
               const operator = prop.operator?.type || 'Equals';
               const path = this.escapeSql(prop.path);
               const escapedValue = this.escapeSql(value);
+              const likeValue = this.escapeLike(value);
               const numericValue = this.escapeNumeric(value);
 
               switch (operator) {
@@ -381,9 +391,9 @@ export class SegmentClickHouseQueryBuilderService {
                 case 'NotEquals':
                   return `JSONExtractString(properties, '${path}') != '${escapedValue}'`;
                 case 'Contains':
-                  return `JSONExtractString(properties, '${path}') LIKE '%${escapedValue}%'`;
+                  return `JSONExtractString(properties, '${path}') LIKE '%${likeValue}%'`;
                 case 'NotContains':
-                  return `JSONExtractString(properties, '${path}') NOT LIKE '%${escapedValue}%'`;
+                  return `JSONExtractString(properties, '${path}') NOT LIKE '%${likeValue}%'`;
                 case 'GreaterThan':
                   return `toFloat64OrNull(JSONExtractString(properties, '${path}')) > ${numericValue}`;
                 case 'GreaterThanOrEqual':
@@ -483,6 +493,7 @@ export class SegmentClickHouseQueryBuilderService {
               const operator = prop.operator?.type || 'Equals';
               const path = this.escapeSql(prop.path);
               const escapedValue = this.escapeSql(value);
+              const likeValue = this.escapeLike(value);
 
               switch (operator) {
                 case 'Equals':
@@ -490,9 +501,9 @@ export class SegmentClickHouseQueryBuilderService {
                 case 'NotEquals':
                   return `JSONExtractString(properties, '${path}') != '${escapedValue}'`;
                 case 'Contains':
-                  return `JSONExtractString(properties, '${path}') LIKE '%${escapedValue}%'`;
+                  return `JSONExtractString(properties, '${path}') LIKE '%${likeValue}%'`;
                 case 'NotContains':
-                  return `JSONExtractString(properties, '${path}') NOT LIKE '%${escapedValue}%'`;
+                  return `JSONExtractString(properties, '${path}') NOT LIKE '%${likeValue}%'`;
                 case 'Exists':
                   return `JSONExtractString(properties, '${path}') != ''`;
                 default:
@@ -555,8 +566,11 @@ export class SegmentClickHouseQueryBuilderService {
             MessageClicked: `${messageType}_clicked`,
             MessageFailed: `${messageType}_failed`,
           };
-          const resolvedEvent =
-            eventMap[messageNode.event] ?? this.escapeSql(messageNode.event);
+          // Own-key check: a prototype name like 'toString' must not resolve
+          // an inherited function into the SQL literal.
+          const resolvedEvent = Object.hasOwn(eventMap, messageNode.event)
+            ? eventMap[messageNode.event]
+            : this.escapeSql(messageNode.event);
           condition = `event_name = '${resolvedEvent}'`;
         }
 
@@ -813,7 +827,7 @@ export class SegmentClickHouseQueryBuilderService {
         operator === 'NotEquals'
           ? `= '${escapedValue}'`
           : operator === 'NotContains'
-            ? `LIKE '%${escapedValue}%'`
+            ? `LIKE '%${this.escapeLike(value)}%'`
             : `!= ''`; // NotExists: flip back to false when a current value exists
 
       return [
@@ -910,6 +924,7 @@ export class SegmentClickHouseQueryBuilderService {
 
     const { operator, extractPath } = subQuery.validationInfo;
     const value = this.escapeSql(subQuery.validationInfo.value);
+    const likeValue = this.escapeLike(subQuery.validationInfo.value);
     const numericValue = this.escapeNumeric(subQuery.validationInfo.value);
     const baseValue = subQuery.argMaxValue;
 
@@ -934,13 +949,13 @@ export class SegmentClickHouseQueryBuilderService {
           );
           return notEqualsValidation;
         case 'Contains':
-          const containsStringValidation = `argMaxState(if(${baseValue} LIKE '%${value}%', '1', ''), ce.occurred_at)`;
+          const containsStringValidation = `argMaxState(if(${baseValue} LIKE '%${likeValue}%', '1', ''), ce.occurred_at)`;
           this.logger.debug(
             `Generated string Contains validation for ${subQuery.stateId}: ${containsStringValidation}`,
           );
           return containsStringValidation;
         case 'NotContains':
-          const notContainsStringValidation = `argMaxState(if(${baseValue} NOT LIKE '%${value}%', '1', ''), ce.occurred_at)`;
+          const notContainsStringValidation = `argMaxState(if(${baseValue} NOT LIKE '%${likeValue}%', '1', ''), ce.occurred_at)`;
           this.logger.debug(
             `Generated string NotContains validation for ${subQuery.stateId}: ${notContainsStringValidation}`,
           );
@@ -994,7 +1009,7 @@ export class SegmentClickHouseQueryBuilderService {
   /**
    * Get ClickHouse operator equivalent
    */
-  getClickHouseOperator(operator: string): string {
+  getClickHouseOperator(operator: string): string | null {
     const operatorMap: Record<string, string> = {
       GreaterThanOrEqual: '>=',
       GreaterThan: '>',
@@ -1004,13 +1019,17 @@ export class SegmentClickHouseQueryBuilderService {
       NotEquals: '!=',
     };
 
-    return operatorMap[operator] || operator;
+    // Fail closed: an unmapped operator is user input and must never reach
+    // the SQL raw. Callers turn null into a no-match comparison.
+    return operatorMap[operator] ?? null;
   }
 
   /**
    * Generate consistent state ID
    */
   generateStateId(segment: Segment, nodeId: string): string {
-    return `${segment.id}_${nodeId}`;
+    // node.id comes from the user-authored definition and this id is inlined
+    // into SQL literals downstream; strip quote/backslash so it can't break one.
+    return `${segment.id}_${String(nodeId ?? '').replace(/['\\]/g, '')}`;
   }
 }
