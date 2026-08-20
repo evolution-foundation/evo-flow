@@ -7,6 +7,7 @@ import {
   OrSegmentNode,
 } from '../entities/segment.entity';
 import { CustomLoggerService } from 'src/common/services/custom-logger.service';
+import { SegmentQueryUtils } from '../utils/segment-query.utils';
 
 interface StateSubQuery {
   stateId: string;
@@ -33,6 +34,25 @@ export class SegmentClickHouseQueryBuilderService {
   private readonly logger = new CustomLoggerService(
     SegmentClickHouseQueryBuilderService.name,
   );
+
+  /**
+   * Escapes a user-controlled string for safe interpolation inside a SQL
+   * string literal (single-quoted).
+   */
+  private escapeSql(value: unknown): string {
+    return SegmentQueryUtils.sanitizeStringValue(String(value ?? ''));
+  }
+
+  /**
+   * Coerces a user-controlled value to a safe numeric literal for
+   * interpolation outside of quotes. Non-finite input becomes the SQL
+   * literal `null`, so the comparison evaluates to NULL/false instead of
+   * splicing arbitrary text into the query.
+   */
+  private escapeNumeric(value: unknown): string {
+    const num = Number(value);
+    return Number.isFinite(num) ? String(num) : 'null';
+  }
 
   /**
    * Convert segment nodes to state sub-queries using modular builders
@@ -178,10 +198,10 @@ export class SegmentClickHouseQueryBuilderService {
             // Labels agora usam eventos separados, mas mantemos suporte legado
             switch (operator) {
               case 'Contains':
-                condition = `has(JSONExtractArrayRaw(traits, 'labels'), '"${value}"')`;
+                condition = `has(JSONExtractArrayRaw(traits, 'labels'), '"${this.escapeSql(value)}"')`;
                 break;
               case 'NotContains':
-                condition = `NOT has(JSONExtractArrayRaw(traits, 'labels'), '"${value}"')`;
+                condition = `NOT has(JSONExtractArrayRaw(traits, 'labels'), '"${this.escapeSql(value)}"')`;
                 break;
               case 'Exists':
                 condition = `JSONExtractArrayRaw(traits, 'labels') != '[]'`;
@@ -190,42 +210,44 @@ export class SegmentClickHouseQueryBuilderService {
                 condition = `JSONExtractArrayRaw(traits, 'labels') = '[]'`;
                 break;
               default:
-                condition = `has(JSONExtractArrayRaw(traits, 'labels'), '"${value}"')`;
+                condition = `has(JSONExtractArrayRaw(traits, 'labels'), '"${this.escapeSql(value)}"')`;
             }
           } else {
             // Para campos string/número - para campos mutáveis, não usar argMax na condição WHERE
             // A condição inicial será sempre verdadeira e a validação será feita no argMaxValue
             if (useArgMax) {
               // Para campos mutáveis: condição sempre verdadeira, validação no argMaxValue
-              condition = `JSONExtractString(traits, '${extractPath}') != ''`; // Sempre inclui se o campo existe
+              condition = `JSONExtractString(traits, '${this.escapeSql(extractPath)}') != ''`; // Sempre inclui se o campo existe
             } else {
               // Para campos imutáveis: aplicar condição diretamente
-              const extractFunc = `JSONExtractString(traits, '${extractPath}')`;
+              const extractFunc = `JSONExtractString(traits, '${this.escapeSql(extractPath)}')`;
+              const escapedValue = this.escapeSql(value);
+              const numericValue = this.escapeNumeric(value);
 
               switch (operator) {
                 case 'Equals':
-                  condition = `${extractFunc} = '${value}'`;
+                  condition = `${extractFunc} = '${escapedValue}'`;
                   break;
                 case 'NotEquals':
-                  condition = `${extractFunc} != '${value}'`;
+                  condition = `${extractFunc} != '${escapedValue}'`;
                   break;
                 case 'Contains':
-                  condition = `${extractFunc} LIKE '%${value}%'`;
+                  condition = `${extractFunc} LIKE '%${escapedValue}%'`;
                   break;
                 case 'NotContains':
-                  condition = `${extractFunc} NOT LIKE '%${value}%'`;
+                  condition = `${extractFunc} NOT LIKE '%${escapedValue}%'`;
                   break;
                 case 'GreaterThan':
-                  condition = `toFloat64OrNull(${extractFunc}) > ${value}`;
+                  condition = `toFloat64OrNull(${extractFunc}) > ${numericValue}`;
                   break;
                 case 'GreaterThanOrEqual':
-                  condition = `toFloat64OrNull(${extractFunc}) >= ${value}`;
+                  condition = `toFloat64OrNull(${extractFunc}) >= ${numericValue}`;
                   break;
                 case 'LessThan':
-                  condition = `toFloat64OrNull(${extractFunc}) < ${value}`;
+                  condition = `toFloat64OrNull(${extractFunc}) < ${numericValue}`;
                   break;
                 case 'LessThanOrEqual':
-                  condition = `toFloat64OrNull(${extractFunc}) <= ${value}`;
+                  condition = `toFloat64OrNull(${extractFunc}) <= ${numericValue}`;
                   break;
                 case 'Exists':
                   condition = `${extractFunc} != ''`;
@@ -240,7 +262,7 @@ export class SegmentClickHouseQueryBuilderService {
           }
         } else {
           // Sem operador, apenas verifica existência
-          condition = `JSONExtractString(traits, '${extractPath}') != ''`;
+          condition = `JSONExtractString(traits, '${this.escapeSql(extractPath)}') != ''`;
         }
 
         // Definir argMaxValue baseado na estratégia
@@ -249,13 +271,13 @@ export class SegmentClickHouseQueryBuilderService {
           argMaxValue = `
             CASE
               WHEN contact_or_anonymous_id IN (
-                SELECT DISTINCT contact_or_anonymous_id 
-                FROM contact_events 
+                SELECT DISTINCT contact_or_anonymous_id
+                FROM contact_events
                 WHERE event_name = 'contact_deleted'
                 GROUP BY contact_or_anonymous_id
                 HAVING argMax(occurred_at, occurred_at) > 0
               ) THEN ''
-              ELSE JSONExtractString(traits, '${extractPath}')
+              ELSE JSONExtractString(traits, '${this.escapeSql(extractPath)}')
             END
           `
             .replace(/\s+/g, ' ')
@@ -267,8 +289,8 @@ export class SegmentClickHouseQueryBuilderService {
             argMaxValue = `
               CASE
                 WHEN contact_or_anonymous_id IN (
-                  SELECT DISTINCT contact_or_anonymous_id 
-                  FROM contact_events 
+                  SELECT DISTINCT contact_or_anonymous_id
+                  FROM contact_events
                   WHERE event_name = 'contact_deleted'
                   GROUP BY contact_or_anonymous_id
                   HAVING argMax(occurred_at, occurred_at) > 0
@@ -282,13 +304,13 @@ export class SegmentClickHouseQueryBuilderService {
             argMaxValue = `
               CASE
                 WHEN contact_or_anonymous_id IN (
-                  SELECT DISTINCT contact_or_anonymous_id 
-                  FROM contact_events 
+                  SELECT DISTINCT contact_or_anonymous_id
+                  FROM contact_events
                   WHERE event_name = 'contact_deleted'
                   GROUP BY contact_or_anonymous_id
                   HAVING argMax(occurred_at, occurred_at) > 0
                 ) THEN ''
-                ELSE JSONExtractString(traits, '${userPropNode.path}')
+                ELSE JSONExtractString(traits, '${this.escapeSql(userPropNode.path)}')
               END
             `
               .replace(/\s+/g, ' ')
@@ -304,7 +326,7 @@ export class SegmentClickHouseQueryBuilderService {
         // `removed` change clears it). generateArgMaxValidation then applies the
         // operator/value comparison over this argMaxValue.
         if (isCustomAttribute) {
-          condition = `event_name = 'contact.custom_attribute.changed' AND JSONExtractString(traits, 'attributeName') = '${customAttributeName}'`;
+          condition = `event_name = 'contact.custom_attribute.changed' AND JSONExtractString(traits, 'attributeName') = '${this.escapeSql(customAttributeName)}'`;
           argMaxValue = `
             CASE
               WHEN contact_or_anonymous_id IN (
@@ -354,7 +376,7 @@ export class SegmentClickHouseQueryBuilderService {
           return [];
         }
 
-        let condition = `event_name = '${performedNode.event}'`;
+        let condition = `event_name = '${this.escapeSql(performedNode.event)}'`;
 
         // Adicionar condições de propriedades se houver
         if (performedNode.properties && performedNode.properties.length > 0) {
@@ -362,30 +384,33 @@ export class SegmentClickHouseQueryBuilderService {
             (prop: any) => {
               const value = prop.operator?.value || '';
               const operator = prop.operator?.type || 'Equals';
+              const path = this.escapeSql(prop.path);
+              const escapedValue = this.escapeSql(value);
+              const numericValue = this.escapeNumeric(value);
 
               switch (operator) {
                 case 'Equals':
-                  return `JSONExtractString(properties, '${prop.path}') = '${value}'`;
+                  return `JSONExtractString(properties, '${path}') = '${escapedValue}'`;
                 case 'NotEquals':
-                  return `JSONExtractString(properties, '${prop.path}') != '${value}'`;
+                  return `JSONExtractString(properties, '${path}') != '${escapedValue}'`;
                 case 'Contains':
-                  return `JSONExtractString(properties, '${prop.path}') LIKE '%${value}%'`;
+                  return `JSONExtractString(properties, '${path}') LIKE '%${escapedValue}%'`;
                 case 'NotContains':
-                  return `JSONExtractString(properties, '${prop.path}') NOT LIKE '%${value}%'`;
+                  return `JSONExtractString(properties, '${path}') NOT LIKE '%${escapedValue}%'`;
                 case 'GreaterThan':
-                  return `toFloat64OrNull(JSONExtractString(properties, '${prop.path}')) > ${value}`;
+                  return `toFloat64OrNull(JSONExtractString(properties, '${path}')) > ${numericValue}`;
                 case 'GreaterThanOrEqual':
-                  return `toFloat64OrNull(JSONExtractString(properties, '${prop.path}')) >= ${value}`;
+                  return `toFloat64OrNull(JSONExtractString(properties, '${path}')) >= ${numericValue}`;
                 case 'LessThan':
-                  return `toFloat64OrNull(JSONExtractString(properties, '${prop.path}')) < ${value}`;
+                  return `toFloat64OrNull(JSONExtractString(properties, '${path}')) < ${numericValue}`;
                 case 'LessThanOrEqual':
-                  return `toFloat64OrNull(JSONExtractString(properties, '${prop.path}')) <= ${value}`;
+                  return `toFloat64OrNull(JSONExtractString(properties, '${path}')) <= ${numericValue}`;
                 case 'Exists':
-                  return `JSONExtractString(properties, '${prop.path}') != ''`;
+                  return `JSONExtractString(properties, '${path}') != ''`;
                 case 'NotExists':
-                  return `JSONExtractString(properties, '${prop.path}') = ''`;
+                  return `JSONExtractString(properties, '${path}') = ''`;
                 default:
-                  return `JSONExtractString(properties, '${prop.path}') = '${value}'`;
+                  return `JSONExtractString(properties, '${path}') = '${escapedValue}'`;
               }
             },
           );
@@ -395,7 +420,7 @@ export class SegmentClickHouseQueryBuilderService {
 
         // Adicionar janela de tempo se especificada
         if (performedNode.withinSeconds) {
-          condition += ` AND occurred_at >= now() - INTERVAL ${performedNode.withinSeconds} SECOND`;
+          condition += ` AND occurred_at >= now() - INTERVAL ${this.escapeNumeric(performedNode.withinSeconds)} SECOND`;
         }
 
         // Para times e timesOperator, precisamos usar uma abordagem diferente para contar
@@ -429,8 +454,8 @@ export class SegmentClickHouseQueryBuilderService {
               argMaxValue: `
                 CASE
                   WHEN contact_or_anonymous_id IN (
-                    SELECT DISTINCT contact_or_anonymous_id 
-                    FROM contact_events 
+                    SELECT DISTINCT contact_or_anonymous_id
+                    FROM contact_events
                     WHERE event_name = 'contact_deleted'
                     GROUP BY contact_or_anonymous_id
                     HAVING argMax(occurred_at, occurred_at) > 0
@@ -458,7 +483,7 @@ export class SegmentClickHouseQueryBuilderService {
           return [];
         }
 
-        let condition = `event_name = '${lastPerformedNode.event}'`;
+        let condition = `event_name = '${this.escapeSql(lastPerformedNode.event)}'`;
 
         // Adicionar condições whereProperties se houver
         if (
@@ -469,20 +494,22 @@ export class SegmentClickHouseQueryBuilderService {
             (prop: any) => {
               const value = prop.operator?.value || '';
               const operator = prop.operator?.type || 'Equals';
+              const path = this.escapeSql(prop.path);
+              const escapedValue = this.escapeSql(value);
 
               switch (operator) {
                 case 'Equals':
-                  return `JSONExtractString(properties, '${prop.path}') = '${value}'`;
+                  return `JSONExtractString(properties, '${path}') = '${escapedValue}'`;
                 case 'NotEquals':
-                  return `JSONExtractString(properties, '${prop.path}') != '${value}'`;
+                  return `JSONExtractString(properties, '${path}') != '${escapedValue}'`;
                 case 'Contains':
-                  return `JSONExtractString(properties, '${prop.path}') LIKE '%${value}%'`;
+                  return `JSONExtractString(properties, '${path}') LIKE '%${escapedValue}%'`;
                 case 'NotContains':
-                  return `JSONExtractString(properties, '${prop.path}') NOT LIKE '%${value}%'`;
+                  return `JSONExtractString(properties, '${path}') NOT LIKE '%${escapedValue}%'`;
                 case 'Exists':
-                  return `JSONExtractString(properties, '${prop.path}') != ''`;
+                  return `JSONExtractString(properties, '${path}') != ''`;
                 default:
-                  return `JSONExtractString(properties, '${prop.path}') = '${value}'`;
+                  return `JSONExtractString(properties, '${path}') = '${escapedValue}'`;
               }
             },
           );
@@ -498,8 +525,8 @@ export class SegmentClickHouseQueryBuilderService {
             argMaxValue: `
               CASE
                 WHEN contact_or_anonymous_id IN (
-                  SELECT DISTINCT contact_or_anonymous_id 
-                  FROM contact_events 
+                  SELECT DISTINCT contact_or_anonymous_id
+                  FROM contact_events
                   WHERE event_name = 'contact_deleted'
                   GROUP BY contact_or_anonymous_id
                   HAVING argMax(occurred_at, occurred_at) > 0
@@ -529,7 +556,7 @@ export class SegmentClickHouseQueryBuilderService {
         let condition = `event_name = '${messageType}_sent'`;
 
         if (messageNode.templateId) {
-          condition += ` AND JSONExtractString(properties, 'template_id') = '${messageNode.templateId}'`;
+          condition += ` AND JSONExtractString(properties, 'template_id') = '${this.escapeSql(messageNode.templateId)}'`;
         }
 
         if (messageNode.event) {
@@ -541,7 +568,9 @@ export class SegmentClickHouseQueryBuilderService {
             MessageClicked: `${messageType}_clicked`,
             MessageFailed: `${messageType}_failed`,
           };
-          condition = `event_name = '${eventMap[messageNode.event] || messageNode.event}'`;
+          const resolvedEvent =
+            eventMap[messageNode.event] ?? this.escapeSql(messageNode.event);
+          condition = `event_name = '${resolvedEvent}'`;
         }
 
         return [
@@ -551,8 +580,8 @@ export class SegmentClickHouseQueryBuilderService {
             argMaxValue: `
               CASE
                 WHEN contact_or_anonymous_id IN (
-                  SELECT DISTINCT contact_or_anonymous_id 
-                  FROM contact_events 
+                  SELECT DISTINCT contact_or_anonymous_id
+                  FROM contact_events
                   WHERE event_name = 'contact_deleted'
                   GROUP BY contact_or_anonymous_id
                   HAVING argMax(occurred_at, occurred_at) > 0
@@ -574,10 +603,11 @@ export class SegmentClickHouseQueryBuilderService {
 
       case SegmentNodeType.RandomBucket: {
         const bucketNode = node as any;
-        const percent = bucketNode.percent || 0.5; // Default 50%
+        const percent = Number(bucketNode.percent);
+        const safePercent = Number.isFinite(percent) ? percent : 0.5; // Default 50%
 
         // Usa hash do contact_or_anonymous_id para distribuição determinista
-        const condition = `cityHash64(contact_or_anonymous_id) % 100 < ${Math.floor(percent * 100)}`;
+        const condition = `cityHash64(contact_or_anonymous_id) % 100 < ${Math.floor(safePercent * 100)}`;
 
         return [
           {
@@ -602,8 +632,8 @@ export class SegmentClickHouseQueryBuilderService {
             argMaxValue: `
               CASE
                 WHEN contact_or_anonymous_id IN (
-                  SELECT DISTINCT contact_or_anonymous_id 
-                  FROM contact_events 
+                  SELECT DISTINCT contact_or_anonymous_id
+                  FROM contact_events
                   WHERE event_name = 'contact_deleted'
                   GROUP BY contact_or_anonymous_id
                   HAVING argMax(occurred_at, occurred_at) > 0
@@ -633,18 +663,20 @@ export class SegmentClickHouseQueryBuilderService {
           return [];
         }
 
+        const labelId = this.escapeSql(labelNode.labelId);
+
         switch (labelNode.condition) {
           case 'has':
             // For 'has', check current state using argMax of both add/remove events
             return [
               {
                 stateId,
-                condition: `(event_name = 'label_added' OR event_name = 'label_removed') AND JSONExtractString(properties, 'labelId') = '${labelNode.labelId}'`,
+                condition: `(event_name = 'label_added' OR event_name = 'label_removed') AND JSONExtractString(properties, 'labelId') = '${labelId}'`,
                 argMaxValue: `
                   CASE
                     WHEN contact_or_anonymous_id IN (
-                      SELECT DISTINCT contact_or_anonymous_id 
-                      FROM contact_events 
+                      SELECT DISTINCT contact_or_anonymous_id
+                      FROM contact_events
                       WHERE event_name = 'contact_deleted'
                       GROUP BY contact_or_anonymous_id
                       HAVING argMax(occurred_at, occurred_at) > 0
@@ -677,17 +709,17 @@ export class SegmentClickHouseQueryBuilderService {
                 argMaxValue: `
                   CASE
                     WHEN contact_or_anonymous_id IN (
-                      SELECT DISTINCT contact_or_anonymous_id 
-                      FROM contact_events 
+                      SELECT DISTINCT contact_or_anonymous_id
+                      FROM contact_events
                       WHERE event_name = 'contact_deleted'
                       GROUP BY contact_or_anonymous_id
                       HAVING argMax(occurred_at, occurred_at) > 0
                     ) THEN 'false'
                     WHEN contact_or_anonymous_id IN (
-                      SELECT DISTINCT contact_or_anonymous_id 
-                      FROM contact_events 
-                      WHERE (event_name = 'label_added' OR event_name = 'label_removed') 
-                        AND JSONExtractString(properties, 'labelId') = '${labelNode.labelId}'
+                      SELECT DISTINCT contact_or_anonymous_id
+                      FROM contact_events
+                      WHERE (event_name = 'label_added' OR event_name = 'label_removed')
+                        AND JSONExtractString(properties, 'labelId') = '${labelId}'
                       GROUP BY contact_or_anonymous_id
                       HAVING argMax(if(event_name = 'label_added', 'true', 'false'), occurred_at) = 'true'
                     ) THEN 'false'
@@ -726,6 +758,8 @@ export class SegmentClickHouseQueryBuilderService {
         // For CustomAttribute, check current value using argMax of all change events
         const operator = customAttrNode.operator?.type || 'Equals';
         const value = customAttrNode.operator?.value || '';
+        const attributeName = this.escapeSql(customAttrNode.attributeName);
+        const escapedValue = this.escapeSql(value);
 
         // For NotEquals, NotContains, and similar "negative" conditions, we need to include ALL contacts
         // not just those who have custom attribute events
@@ -737,8 +771,8 @@ export class SegmentClickHouseQueryBuilderService {
               argMaxValue: `
                 CASE
                   WHEN contact_or_anonymous_id IN (
-                    SELECT DISTINCT contact_or_anonymous_id 
-                    FROM contact_events 
+                    SELECT DISTINCT contact_or_anonymous_id
+                    FROM contact_events
                     WHERE event_name = 'contact_deleted'
                     GROUP BY contact_or_anonymous_id
                     HAVING argMax(occurred_at, occurred_at) > 0
@@ -747,7 +781,7 @@ export class SegmentClickHouseQueryBuilderService {
                     SELECT DISTINCT contact_or_anonymous_id
                     FROM contact_events
                     WHERE event_name IN ('contact.custom_attribute.changed', 'custom_attribute_changed')
-                      AND JSONExtractString(traits, 'attributeName') = '${customAttrNode.attributeName}'
+                      AND JSONExtractString(traits, 'attributeName') = '${attributeName}'
                     GROUP BY contact_or_anonymous_id
                     HAVING argMax(
                       CASE
@@ -755,7 +789,7 @@ export class SegmentClickHouseQueryBuilderService {
                         ELSE JSONExtractString(traits, 'attributeValue')
                       END,
                       occurred_at
-                    ) ${operator === 'NotEquals' ? '=' : 'LIKE'} ${operator === 'NotEquals' ? `'${value}'` : `'%${value}%'`}
+                    ) ${operator === 'NotEquals' ? '=' : 'LIKE'} ${operator === 'NotEquals' ? `'${escapedValue}'` : `'%${escapedValue}%'`}
                   ) THEN 'false'
                   ELSE 'true'
                 END
@@ -779,7 +813,7 @@ export class SegmentClickHouseQueryBuilderService {
         // The custom-attribute change is an identify-DTO event: the CRM stores the
         // canonical dotted name and the payload in the `traits` column, not
         // `properties` (EVO-1839). Accept both event-name forms; read from traits.
-        const condition = `event_name IN ('contact.custom_attribute.changed', 'custom_attribute_changed') AND JSONExtractString(traits, 'attributeName') = '${customAttrNode.attributeName}'`;
+        const condition = `event_name IN ('contact.custom_attribute.changed', 'custom_attribute_changed') AND JSONExtractString(traits, 'attributeName') = '${attributeName}'`;
 
         // Get the current value using argMax - handle removed attributes as empty
         const argMaxValue = `
@@ -863,7 +897,9 @@ export class SegmentClickHouseQueryBuilderService {
       return defaultValidation;
     }
 
-    const { operator, value, extractPath } = subQuery.validationInfo;
+    const { operator, extractPath } = subQuery.validationInfo;
+    const value = this.escapeSql(subQuery.validationInfo.value);
+    const numericValue = this.escapeNumeric(subQuery.validationInfo.value);
     const baseValue = subQuery.argMaxValue;
 
     this.logger.debug(
@@ -899,25 +935,25 @@ export class SegmentClickHouseQueryBuilderService {
           );
           return notContainsStringValidation;
         case 'GreaterThan':
-          const gtValidation = `argMaxState(if(toFloat64OrNull(${baseValue}) > ${value}, '1', ''), ce.occurred_at)`;
+          const gtValidation = `argMaxState(if(toFloat64OrNull(${baseValue}) > ${numericValue}, '1', ''), ce.occurred_at)`;
           this.logger.debug(
             `Generated string GreaterThan validation for ${subQuery.stateId}: ${gtValidation}`,
           );
           return gtValidation;
         case 'GreaterThanOrEqual':
-          const gteValidation = `argMaxState(if(toFloat64OrNull(${baseValue}) >= ${value}, '1', ''), ce.occurred_at)`;
+          const gteValidation = `argMaxState(if(toFloat64OrNull(${baseValue}) >= ${numericValue}, '1', ''), ce.occurred_at)`;
           this.logger.debug(
             `Generated string GreaterThanOrEqual validation for ${subQuery.stateId}: ${gteValidation}`,
           );
           return gteValidation;
         case 'LessThan':
-          const ltValidation = `argMaxState(if(toFloat64OrNull(${baseValue}) < ${value}, '1', ''), ce.occurred_at)`;
+          const ltValidation = `argMaxState(if(toFloat64OrNull(${baseValue}) < ${numericValue}, '1', ''), ce.occurred_at)`;
           this.logger.debug(
             `Generated string LessThan validation for ${subQuery.stateId}: ${ltValidation}`,
           );
           return ltValidation;
         case 'LessThanOrEqual':
-          const lteValidation = `argMaxState(if(toFloat64OrNull(${baseValue}) <= ${value}, '1', ''), ce.occurred_at)`;
+          const lteValidation = `argMaxState(if(toFloat64OrNull(${baseValue}) <= ${numericValue}, '1', ''), ce.occurred_at)`;
           this.logger.debug(
             `Generated string LessThanOrEqual validation for ${subQuery.stateId}: ${lteValidation}`,
           );

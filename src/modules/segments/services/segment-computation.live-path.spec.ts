@@ -134,3 +134,100 @@ describe('EVO-1901 live segment recompute SQL builder', () => {
     );
   });
 });
+
+describe('segment recompute SQL builder escapes user-controlled values', () => {
+  const builder = new SegmentClickHouseQueryBuilderService();
+
+  it('escapes a single quote in a CustomAttribute value instead of splicing it into the SQL', () => {
+    const segment = { id: 'seg-1' } as any;
+    const node = {
+      id: 'n1',
+      type: SegmentNodeType.CustomAttribute,
+      attributeName: 'tier',
+      operator: { type: 'Equals', value: `platinum' OR '1'='1` },
+    } as any;
+
+    const [subQuery] = builder.segmentNodeToStateSubQuery(segment, node);
+
+    expect(subQuery.condition).not.toContain(`platinum' OR '1'='1`);
+    expect(subQuery.validationInfo?.value).toBe(`platinum' OR '1'='1`);
+  });
+
+  it('escapes a single quote in the attributeName used to filter events', () => {
+    const segment = { id: 'seg-1' } as any;
+    const node = {
+      id: 'n1',
+      type: SegmentNodeType.CustomAttribute,
+      attributeName: `tier' OR '1'='1`,
+      operator: { type: 'Equals', value: 'platinum' },
+    } as any;
+
+    const [subQuery] = builder.segmentNodeToStateSubQuery(segment, node);
+
+    expect(subQuery.condition).not.toContain(`tier' OR '1'='1`);
+    expect(subQuery.condition).toContain(`tier'' OR ''1''=''1`);
+  });
+
+  it('escapes a single quote in a Performed event property path and value', () => {
+    const segment = { id: 'seg-1' } as any;
+    const node = {
+      id: 'n1',
+      type: SegmentNodeType.Performed,
+      event: 'order_placed',
+      properties: [
+        {
+          path: `plan' OR '1'='1`,
+          operator: { type: 'Equals', value: `gold' OR '1'='1` },
+        },
+      ],
+    } as any;
+
+    const [subQuery] = builder.segmentNodeToStateSubQuery(segment, node);
+
+    expect(subQuery.condition).not.toContain(`plan' OR '1'='1`);
+    expect(subQuery.condition).not.toContain(`gold' OR '1'='1`);
+  });
+
+  it('escapes a single quote in a Label labelId', () => {
+    const segment = { id: 'seg-1' } as any;
+    const node = {
+      id: 'n1',
+      type: SegmentNodeType.Label,
+      labelId: `vip' OR '1'='1`,
+      condition: 'has',
+    } as any;
+
+    const [subQuery] = builder.segmentNodeToStateSubQuery(segment, node);
+
+    expect(subQuery.condition).not.toContain(`vip' OR '1'='1`);
+  });
+
+  it('escapes a single quote in a WhatsApp templateId', () => {
+    const segment = { id: 'seg-1' } as any;
+    const node = {
+      id: 'n1',
+      type: SegmentNodeType.WhatsApp,
+      templateId: `welcome' OR '1'='1`,
+    } as any;
+
+    const [subQuery] = builder.segmentNodeToStateSubQuery(segment, node);
+
+    expect(subQuery.condition).not.toContain(`welcome' OR '1'='1`);
+  });
+
+  it('falls back to a null numeric literal for a non-numeric GreaterThan value, instead of splicing raw text', () => {
+    const segment = { id: 'seg-1' } as any;
+    const node = {
+      id: 'n1',
+      type: SegmentNodeType.UserProperty,
+      path: 'leadScore',
+      operator: { type: 'GreaterThan', value: '0 OR 1=1' },
+    } as any;
+
+    const [subQuery] = builder.segmentNodeToStateSubQuery(segment, node);
+    const validation = builder.generateArgMaxValidation(subQuery);
+
+    expect(validation).not.toContain('0 OR 1=1');
+    expect(validation).toContain('null');
+  });
+});
