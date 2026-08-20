@@ -35,20 +35,12 @@ export class SegmentClickHouseQueryBuilderService {
     SegmentClickHouseQueryBuilderService.name,
   );
 
-  /**
-   * Escapes a user-controlled string for safe interpolation inside a SQL
-   * string literal (single-quoted).
-   */
   private escapeSql(value: unknown): string {
     return SegmentQueryUtils.sanitizeStringValue(String(value ?? ''));
   }
 
-  /**
-   * Coerces a user-controlled value to a safe numeric literal for
-   * interpolation outside of quotes. Non-finite input becomes the SQL
-   * literal `null`, so the comparison evaluates to NULL/false instead of
-   * splicing arbitrary text into the query.
-   */
+  // Non-finite input becomes the literal `null` instead of raw text, so an
+  // unquoted numeric comparison can't be used to splice in arbitrary SQL.
   private escapeNumeric(value: unknown): string {
     const num = Number(value);
     return Number.isFinite(num) ? String(num) : 'null';
@@ -791,22 +783,11 @@ export class SegmentClickHouseQueryBuilderService {
     }
   }
 
-  /**
-   * Builds the sub-query for a custom attribute condition, shared by the
-   * dedicated CustomAttribute node and the legacy UserProperty
-   * `customAttributes[.<attr>]` path. Custom attributes are stored as delta
-   * events (`contact.custom_attribute.changed`/`custom_attribute_changed`
-   * with `{ attributeName, attributeValue, changeType }`), never as a flat
-   * `traits` key, so a contact only gets a row in the state table for
-   * events matching this attributeName.
-   *
-   * NotEquals/NotContains/NotExists are "negative" conditions that must
-   * also match contacts who never had an event for this attribute — a
-   * contact with no event trivially satisfies "not equal to X" or "has no
-   * value". The per-event condition alone can't express that, so these
-   * three include every contact up front and use a subquery to flip back
-   * to false the ones for whom the underlying positive comparison holds.
-   */
+  // Shared by the CustomAttribute node and the legacy UserProperty
+  // customAttributes[.<attr>] path. NotEquals/NotContains/NotExists also
+  // need to match contacts with no event for the attribute (e.g. "not equal
+  // to X" is trivially true for them), so those three include every contact
+  // up front and flip back to false via a subquery on the positive match.
   private buildCustomAttributeSubQuery(
     stateId: string,
     segment: Segment,
@@ -874,14 +855,10 @@ export class SegmentClickHouseQueryBuilderService {
       ];
     }
 
-    // Positive conditions (Equals, Contains, Exists, etc.): a contact
-    // without a matching event correctly has no row and is excluded. The
-    // custom-attribute change is an identify-DTO event: the CRM stores the
-    // canonical dotted name and the payload in the `traits` column, not
-    // `properties`. Accept both event-name forms; read from traits.
+    // Positive conditions: a contact with no matching event correctly has
+    // no row and is excluded.
     const condition = `event_name IN ('contact.custom_attribute.changed', 'custom_attribute_changed') AND JSONExtractString(traits, 'attributeName') = '${escapedAttributeName}'`;
 
-    // Get the current value using argMax - handle removed attributes as empty
     const argMaxValue = `
       CASE
         WHEN contact_or_anonymous_id IN (

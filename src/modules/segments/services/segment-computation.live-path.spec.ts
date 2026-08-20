@@ -53,9 +53,6 @@ describe('EVO-1901 live segment recompute SQL builder', () => {
 
     const [subQuery] = builder.segmentNodeToStateSubQuery(segment, node);
 
-    // Selects the attribute's change events, accepting both the canonical
-    // and the legacy event-name form (same as the dedicated CustomAttribute
-    // node — the two entry points now share one builder)…
     expect(subQuery.condition).toContain('contact.custom_attribute.changed');
     expect(subQuery.condition).toContain('custom_attribute_changed');
     expect(subQuery.condition).toContain(
@@ -262,7 +259,6 @@ describe('custom attribute sub-query is shared between both entry points', () =>
     expect(fromUserPropertyPath.argMaxValue).toBe(
       fromCustomAttributeNode.argMaxValue,
     );
-    // both include every contact up front (the fix this test locks in)…
     expect(fromUserPropertyPath.condition).toBe('1 = 1');
   });
 
@@ -277,9 +273,6 @@ describe('custom attribute sub-query is shared between both entry points', () =>
 
     const [subQuery] = builder.segmentNodeToStateSubQuery(segment, node);
 
-    // Doesn't filter contact_events down to just this attribute's events —
-    // a contact with zero events for it still gets a row and defaults to
-    // matching (only flipped to non-matching if they currently have a value).
     expect(subQuery.condition).toBe('1 = 1');
     expect(subQuery.argMaxValue).toContain("THEN 'false'");
     expect(subQuery.argMaxValue).toContain("ELSE 'true'");
