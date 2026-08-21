@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { DELETED_CONTACTS_SUBQUERY } from '../queries/contact-event-names';
 import { ClickHouseService } from '../../processing/clickhouse/clickhouse.service';
 import { CustomLoggerService } from 'src/common/services/custom-logger.service';
 
@@ -41,13 +42,7 @@ export class DeletedContactsCacheService {
   }
 
   private async fetchDeletedContactsFromClickHouse(): Promise<Set<string>> {
-    const query = `
-      SELECT DISTINCT contact_or_anonymous_id
-      FROM contact_events
-      WHERE event_name = 'contact_deleted'
-      GROUP BY contact_or_anonymous_id
-      HAVING argMax(occurred_at, occurred_at) > 0
-    `;
+    const query = DELETED_CONTACTS_SUBQUERY;
 
     const result = await this.clickhouseService.query({ query });
 

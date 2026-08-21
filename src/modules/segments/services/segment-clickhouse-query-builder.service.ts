@@ -8,6 +8,12 @@ import {
 } from '../entities/segment.entity';
 import { CustomLoggerService } from 'src/common/services/custom-logger.service';
 import { SegmentQueryUtils } from '../utils/segment-query.utils';
+import {
+  DELETED_CONTACTS_SUBQUERY,
+  LABEL_ADDED_EVENT_NAMES,
+  LABEL_REMOVED_EVENT_NAMES,
+  sqlStringList,
+} from '../queries/contact-event-names';
 
 interface StateSubQuery {
   stateId: string;
@@ -293,11 +299,7 @@ export class SegmentClickHouseQueryBuilderService {
           argMaxValue = `
             CASE
               WHEN contact_or_anonymous_id IN (
-                SELECT DISTINCT contact_or_anonymous_id
-                FROM contact_events
-                WHERE event_name = 'contact_deleted'
-                GROUP BY contact_or_anonymous_id
-                HAVING argMax(occurred_at, occurred_at) > 0
+                ${DELETED_CONTACTS_SUBQUERY}
               ) THEN ''
               ELSE JSONExtractString(traits, '${this.escapeSql(extractPath)}')
             END
@@ -311,11 +313,7 @@ export class SegmentClickHouseQueryBuilderService {
             argMaxValue = `
               CASE
                 WHEN contact_or_anonymous_id IN (
-                  SELECT DISTINCT contact_or_anonymous_id
-                  FROM contact_events
-                  WHERE event_name = 'contact_deleted'
-                  GROUP BY contact_or_anonymous_id
-                  HAVING argMax(occurred_at, occurred_at) > 0
+                  ${DELETED_CONTACTS_SUBQUERY}
                 ) THEN ''
                 ELSE toString(occurred_at)
               END
@@ -326,11 +324,7 @@ export class SegmentClickHouseQueryBuilderService {
             argMaxValue = `
               CASE
                 WHEN contact_or_anonymous_id IN (
-                  SELECT DISTINCT contact_or_anonymous_id
-                  FROM contact_events
-                  WHERE event_name = 'contact_deleted'
-                  GROUP BY contact_or_anonymous_id
-                  HAVING argMax(occurred_at, occurred_at) > 0
+                  ${DELETED_CONTACTS_SUBQUERY}
                 ) THEN ''
                 ELSE JSONExtractString(traits, '${this.escapeSql(userPropNode.path)}')
               END
@@ -451,11 +445,7 @@ export class SegmentClickHouseQueryBuilderService {
               argMaxValue: `
                 CASE
                   WHEN contact_or_anonymous_id IN (
-                    SELECT DISTINCT contact_or_anonymous_id
-                    FROM contact_events
-                    WHERE event_name = 'contact_deleted'
-                    GROUP BY contact_or_anonymous_id
-                    HAVING argMax(occurred_at, occurred_at) > 0
+                    ${DELETED_CONTACTS_SUBQUERY}
                   ) THEN ''
                   ELSE toString(occurred_at)
                 END
@@ -523,11 +513,7 @@ export class SegmentClickHouseQueryBuilderService {
             argMaxValue: `
               CASE
                 WHEN contact_or_anonymous_id IN (
-                  SELECT DISTINCT contact_or_anonymous_id
-                  FROM contact_events
-                  WHERE event_name = 'contact_deleted'
-                  GROUP BY contact_or_anonymous_id
-                  HAVING argMax(occurred_at, occurred_at) > 0
+                  ${DELETED_CONTACTS_SUBQUERY}
                 ) THEN ''
                 ELSE toString(occurred_at)
               END
@@ -581,11 +567,7 @@ export class SegmentClickHouseQueryBuilderService {
             argMaxValue: `
               CASE
                 WHEN contact_or_anonymous_id IN (
-                  SELECT DISTINCT contact_or_anonymous_id
-                  FROM contact_events
-                  WHERE event_name = 'contact_deleted'
-                  GROUP BY contact_or_anonymous_id
-                  HAVING argMax(occurred_at, occurred_at) > 0
+                  ${DELETED_CONTACTS_SUBQUERY}
                 ) THEN ''
                 ELSE toString(occurred_at)
               END
@@ -633,11 +615,7 @@ export class SegmentClickHouseQueryBuilderService {
             argMaxValue: `
               CASE
                 WHEN contact_or_anonymous_id IN (
-                  SELECT DISTINCT contact_or_anonymous_id
-                  FROM contact_events
-                  WHERE event_name = 'contact_deleted'
-                  GROUP BY contact_or_anonymous_id
-                  HAVING argMax(occurred_at, occurred_at) > 0
+                  ${DELETED_CONTACTS_SUBQUERY}
                 ) THEN 'false'
                 ELSE 'true'
               END
@@ -665,6 +643,8 @@ export class SegmentClickHouseQueryBuilderService {
         }
 
         const labelId = this.escapeSql(labelNode.labelId);
+        const LABEL_ADDED_IN = sqlStringList(LABEL_ADDED_EVENT_NAMES);
+        const LABEL_EVENTS_IN = sqlStringList([...LABEL_ADDED_EVENT_NAMES, ...LABEL_REMOVED_EVENT_NAMES]);
 
         switch (labelNode.condition) {
           case 'has':
@@ -672,17 +652,13 @@ export class SegmentClickHouseQueryBuilderService {
             return [
               {
                 stateId,
-                condition: `(event_name = 'label_added' OR event_name = 'label_removed') AND JSONExtractString(properties, 'labelId') = '${labelId}'`,
+                condition: `event_name IN (${LABEL_EVENTS_IN}) AND JSONExtractString(traits, 'labelId') = '${labelId}'`,
                 argMaxValue: `
                   CASE
                     WHEN contact_or_anonymous_id IN (
-                      SELECT DISTINCT contact_or_anonymous_id
-                      FROM contact_events
-                      WHERE event_name = 'contact_deleted'
-                      GROUP BY contact_or_anonymous_id
-                      HAVING argMax(occurred_at, occurred_at) > 0
+                      ${DELETED_CONTACTS_SUBQUERY}
                     ) THEN 'false'
-                    ELSE if(event_name = 'label_added', 'true', 'false')
+                    ELSE if(event_name IN (${LABEL_ADDED_IN}), 'true', 'false')
                   END
                 `,
                 uniqValue: `message_id`,
@@ -710,19 +686,15 @@ export class SegmentClickHouseQueryBuilderService {
                 argMaxValue: `
                   CASE
                     WHEN contact_or_anonymous_id IN (
-                      SELECT DISTINCT contact_or_anonymous_id
-                      FROM contact_events
-                      WHERE event_name = 'contact_deleted'
-                      GROUP BY contact_or_anonymous_id
-                      HAVING argMax(occurred_at, occurred_at) > 0
+                      ${DELETED_CONTACTS_SUBQUERY}
                     ) THEN 'false'
                     WHEN contact_or_anonymous_id IN (
                       SELECT DISTINCT contact_or_anonymous_id
                       FROM contact_events
-                      WHERE (event_name = 'label_added' OR event_name = 'label_removed')
-                        AND JSONExtractString(properties, 'labelId') = '${labelId}'
+                      WHERE event_name IN (${LABEL_EVENTS_IN})
+                        AND JSONExtractString(traits, 'labelId') = '${labelId}'
                       GROUP BY contact_or_anonymous_id
-                      HAVING argMax(if(event_name = 'label_added', 'true', 'false'), occurred_at) = 'true'
+                      HAVING argMax(if(event_name IN (${LABEL_ADDED_IN}), 'true', 'false'), occurred_at) = 'true'
                     ) THEN 'false'
                     ELSE 'true'
                   END
@@ -837,11 +809,7 @@ export class SegmentClickHouseQueryBuilderService {
           argMaxValue: `
             CASE
               WHEN contact_or_anonymous_id IN (
-                SELECT DISTINCT contact_or_anonymous_id
-                FROM contact_events
-                WHERE event_name = 'contact_deleted'
-                GROUP BY contact_or_anonymous_id
-                HAVING argMax(occurred_at, occurred_at) > 0
+                ${DELETED_CONTACTS_SUBQUERY}
               ) THEN 'false'
               WHEN contact_or_anonymous_id IN (
                 SELECT DISTINCT contact_or_anonymous_id
@@ -876,11 +844,7 @@ export class SegmentClickHouseQueryBuilderService {
     const argMaxValue = `
       CASE
         WHEN contact_or_anonymous_id IN (
-          SELECT DISTINCT contact_or_anonymous_id
-          FROM contact_events
-          WHERE event_name = 'contact_deleted'
-          GROUP BY contact_or_anonymous_id
-          HAVING argMax(occurred_at, occurred_at) > 0
+          ${DELETED_CONTACTS_SUBQUERY}
         ) THEN ''
         WHEN JSONExtractString(traits, 'changeType') = 'removed' THEN ''
         ELSE JSONExtractString(traits, 'attributeValue')

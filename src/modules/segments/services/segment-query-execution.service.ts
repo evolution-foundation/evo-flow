@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { ClickHouseService } from '../../processing/clickhouse/clickhouse.service';
 import { Segment } from '../entities/segment.entity';
 import { DeletedContactsCacheService } from './deleted-contacts-cache.service';
+import { DELETED_CONTACTS_CASE_BRANCH_REGEX } from '../queries/contact-event-names';
 import { SegmentMetricsService } from '../metrics/segment-metrics.service';
 import { SegmentClickHouseQueryBuilderService } from './segment-clickhouse-query-builder.service';
 import { CustomLoggerService } from 'src/common/services/custom-logger.service';
@@ -183,7 +184,7 @@ export class SegmentQueryExecutionService {
 
     if (deletedContacts.size === 0) {
       return query.replace(
-        /WHEN contact_or_anonymous_id IN \([^)]*SELECT[^)]*contact_deleted[^)]*\) THEN '[^']*'/g,
+        DELETED_CONTACTS_CASE_BRANCH_REGEX,
         `WHEN 1=0 THEN 'false'`,
       );
     }
@@ -194,7 +195,7 @@ export class SegmentQueryExecutionService {
     const deletedContactsList = deletedContactsArray.join(',');
 
     const optimizedQuery = query.replace(
-      /WHEN contact_or_anonymous_id IN \([^)]*SELECT[^)]*contact_deleted[^)]*\) THEN '[^']*'/g,
+      DELETED_CONTACTS_CASE_BRANCH_REGEX,
       `WHEN contact_or_anonymous_id IN (${deletedContactsList}) THEN 'false'`,
     );
 
