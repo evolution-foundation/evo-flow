@@ -1,9 +1,11 @@
 import { SegmentClickHouseQueryBuilderService } from './segment-clickhouse-query-builder.service';
 import { SegmentNodeType } from '../entities/segment.entity';
 import {
+  applyDeletedContactsOptimization,
   DELETED_CONTACTS_CASE_BRANCH_REGEX,
   DELETED_CONTACTS_SUBQUERY,
 } from '../queries/contact-event-names';
+import { DeletedContactsCacheService } from './deleted-contacts-cache.service';
 
 /**
  * CRM-215 — the CRM emits dotted canonical event names (`contact.label.added`,
@@ -110,5 +112,79 @@ describe('CRM-215 segment SQL matches the canonical contact event names', () => 
 
     expect(rewritten).toContain(`WHEN 1=0 THEN 'false'`);
     expect(rewritten).not.toContain(DELETED_CONTACTS_SUBQUERY);
+  });
+});
+
+describe('CRM-215 deleted-contacts cache never trades correctness for speed', () => {
+  const builder = new SegmentClickHouseQueryBuilderService();
+  const segment = { id: 'seg-1' } as any;
+  const node = {
+    id: 'n1',
+    type: SegmentNodeType.Label,
+    labelId: 'lbl-1',
+    condition: 'not_has',
+  } as any;
+
+  it('keeps the real subselect when the cache is empty (empty cache ≠ no deleted contacts)', () => {
+    const [subQuery] = builder.segmentNodeToStateSubQuery(segment, node);
+    const sql = String(subQuery.argMaxValue);
+
+    const out = applyDeletedContactsOptimization(sql, new Set());
+
+    expect(out).toBe(sql);
+    expect(out).toContain(DELETED_CONTACTS_SUBQUERY);
+    expect(out).not.toContain('WHEN 1=0');
+  });
+
+  it('inlines the cached ids (escaped) when the cache has entries', () => {
+    const [subQuery] = builder.segmentNodeToStateSubQuery(segment, node);
+    const sql = String(subQuery.argMaxValue);
+
+    const out = applyDeletedContactsOptimization(
+      sql,
+      new Set(['c-1', "x' OR '1'='1"]),
+    );
+
+    expect(out).not.toContain(DELETED_CONTACTS_SUBQUERY);
+    expect(out).toContain(
+      "WHEN contact_or_anonymous_id IN ('c-1','x'' OR ''1''=''1') THEN 'false'",
+    );
+  });
+
+  it('bypasses the cache for a short window after the signal (ClickHouse ingest is async)', async () => {
+    const fetches: Set<string>[] = [
+      new Set(['stale']),
+      new Set(['stale', 'fresh']),
+    ];
+    const clickhouse = { query: jest.fn() } as any;
+    const cache = new DeletedContactsCacheService(clickhouse);
+    (cache as any).fetchDeletedContactsFromClickHouse = jest.fn(() =>
+      Promise.resolve(fetches.shift() ?? new Set<string>()),
+    );
+
+    expect(await cache.getDeletedContacts()).toEqual(new Set(['stale']));
+    expect(await cache.getDeletedContacts()).toEqual(new Set(['stale'])); // cache hit
+
+    cache.onContactDeletedIngested();
+
+    expect(await cache.getDeletedContacts()).toEqual(
+      new Set(['stale', 'fresh']),
+    ); // re-queried
+    expect(
+      (cache as any).fetchDeletedContactsFromClickHouse,
+    ).toHaveBeenCalledTimes(2);
+    expect((cache as any).expiresAt).toBeLessThanOrEqual(
+      (cache as any).bypassCacheUntil,
+    );
+  });
+
+  it('drops the cached snapshot when a deleted-contact event is ingested', () => {
+    const cache = new DeletedContactsCacheService({} as any);
+    (cache as any).cached = new Set(['c-1']);
+    (cache as any).expiresAt = Number.MAX_SAFE_INTEGER;
+
+    cache.onContactDeletedIngested();
+
+    expect((cache as any).cached).toBeNull();
   });
 });

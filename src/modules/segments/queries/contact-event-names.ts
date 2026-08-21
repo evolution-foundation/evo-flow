@@ -40,3 +40,31 @@ export const DELETED_CONTACTS_CASE_BRANCH_REGEX = new RegExp(
   `WHEN contact_or_anonymous_id IN \\(\\s*${escapeRegExp(DELETED_CONTACTS_SUBQUERY)}\\s*\\) THEN '[^']*'`,
   'g',
 );
+
+/**
+ * In-process signal emitted by the events API when a deleted-contact event is ingested,
+ * so the deleted-contacts cache drops its snapshot before the next segment recompute.
+ * Without it the incremental recompute could evaluate the deletion window with a stale
+ * (empty) cache and keep the contact assigned until a full recompute (CRM-215).
+ */
+export const CONTACT_DELETED_INGESTED_EVENT =
+  'segments.contact-deleted.ingested';
+
+/**
+ * Replaces the deleted-contacts subselect in a state query with the cached id list.
+ * It is an optimization only: with an EMPTY cache the real subselect is kept, because
+ * "no deleted contacts cached" is not the same as "no deleted contacts".
+ */
+export function applyDeletedContactsOptimization(
+  query: string,
+  deletedContacts: ReadonlySet<string>,
+): string {
+  if (deletedContacts.size === 0) return query;
+  const list = Array.from(deletedContacts)
+    .map((id) => `'${id.replace(/'/g, "''")}'`)
+    .join(',');
+  return query.replace(
+    DELETED_CONTACTS_CASE_BRANCH_REGEX,
+    `WHEN contact_or_anonymous_id IN (${list}) THEN 'false'`,
+  );
+}

@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { ClickHouseService } from '../../processing/clickhouse/clickhouse.service';
 import { Segment } from '../entities/segment.entity';
 import { DeletedContactsCacheService } from './deleted-contacts-cache.service';
-import { DELETED_CONTACTS_CASE_BRANCH_REGEX } from '../queries/contact-event-names';
+import { applyDeletedContactsOptimization } from '../queries/contact-event-names';
 import { SegmentMetricsService } from '../metrics/segment-metrics.service';
 import { SegmentClickHouseQueryBuilderService } from './segment-clickhouse-query-builder.service';
 import { CustomLoggerService } from 'src/common/services/custom-logger.service';
@@ -174,7 +174,8 @@ export class SegmentQueryExecutionService {
       operation: 'deleted_contacts_cache_lookup',
     });
 
-    const deletedContacts = await this.deletedContactsCache.getDeletedContacts();
+    const deletedContacts =
+      await this.deletedContactsCache.getDeletedContacts();
 
     if (deletedContacts.size > 0) {
       this.metrics.recordCacheHit();
@@ -182,22 +183,13 @@ export class SegmentQueryExecutionService {
       this.metrics.recordCacheMiss();
     }
 
+    const optimizedQuery = applyDeletedContactsOptimization(
+      query,
+      deletedContacts,
+    );
     if (deletedContacts.size === 0) {
-      return query.replace(
-        DELETED_CONTACTS_CASE_BRANCH_REGEX,
-        `WHEN 1=0 THEN 'false'`,
-      );
+      return optimizedQuery;
     }
-
-    const deletedContactsArray = Array.from(deletedContacts).map(
-      (id) => `'${id}'`,
-    );
-    const deletedContactsList = deletedContactsArray.join(',');
-
-    const optimizedQuery = query.replace(
-      DELETED_CONTACTS_CASE_BRANCH_REGEX,
-      `WHEN contact_or_anonymous_id IN (${deletedContactsList}) THEN 'false'`,
-    );
 
     this.logger.debug(
       `Optimized query: replaced nested subqueries with ${deletedContacts.size} cached deleted contacts`,
