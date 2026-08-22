@@ -18,3 +18,16 @@ describe('EventRoutingConfigHelper.getEventClassification — custom attribute (
     ).toBe(EventClassification.LIFECYCLE);
   });
 });
+
+// CRM-215: same defect for the deletion event — the CRM emits `contact.deleted`,
+// which fell through to the SYSTEM fallback and scored low priority.
+describe('EventRoutingConfigHelper.getEventClassification — contact deleted (CRM-215)', () => {
+  it.each(['contact.deleted', 'contact_deleted'])(
+    'classifies %s as LIFECYCLE',
+    (eventName) => {
+      expect(EventRoutingConfigHelper.getEventClassification(eventName)).toBe(
+        EventClassification.LIFECYCLE,
+      );
+    },
+  );
+});

@@ -151,6 +151,49 @@ describe('CRM-215 deleted-contacts cache never trades correctness for speed', ()
     );
   });
 
+  // Most node types mark a deleted contact with the EMPTY sentinel and membership is
+  // `argMaxMerge(last_value) != ''`: rewriting it to 'false' put the contact back in.
+  it.each([
+    [SegmentNodeType.LastPerformed, { event: 'order_placed' }],
+    [SegmentNodeType.Performed, { event: 'order_placed' }],
+    [SegmentNodeType.WhatsApp, { event: 'MessageSent' }],
+  ])(
+    '%s: keeps the empty sentinel of the deleted-contacts branch',
+    (type, extra) => {
+      const emptySentinelNode = { id: 'n-empty', type, ...extra } as any;
+      const [subQuery] = builder.segmentNodeToStateSubQuery(
+        segment,
+        emptySentinelNode,
+      );
+      const lastValueSql = builder.generateArgMaxValidation(subQuery);
+      expect(lastValueSql).toContain("THEN ''");
+
+      const out = applyDeletedContactsOptimization(
+        lastValueSql,
+        new Set(['deleted-1']),
+      );
+
+      expect(out).toContain(
+        "WHEN contact_or_anonymous_id IN ('deleted-1') THEN ''",
+      );
+      expect(out).not.toContain(DELETED_CONTACTS_SUBQUERY);
+    },
+  );
+
+  it('does not read `$` inside a contact id as a capture reference', () => {
+    const [subQuery] = builder.segmentNodeToStateSubQuery(segment, node);
+    const sql = String(subQuery.argMaxValue);
+
+    const out = applyDeletedContactsOptimization(
+      sql,
+      new Set(['a$&b', 'c$1d']),
+    );
+
+    expect(out).toContain(
+      "WHEN contact_or_anonymous_id IN ('a$&b','c$1d') THEN 'false'",
+    );
+  });
+
   it('bypasses the cache for a short window after the signal (ClickHouse ingest is async)', async () => {
     const fetches: Set<string>[] = [
       new Set(['stale']),

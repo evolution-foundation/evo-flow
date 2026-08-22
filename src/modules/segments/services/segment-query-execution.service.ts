@@ -183,17 +183,17 @@ export class SegmentQueryExecutionService {
       this.metrics.recordCacheMiss();
     }
 
+    // An empty set leaves the query untouched: the real subselect stays in place.
     const optimizedQuery = applyDeletedContactsOptimization(
       query,
       deletedContacts,
     );
-    if (deletedContacts.size === 0) {
-      return optimizedQuery;
-    }
 
-    this.logger.debug(
-      `Optimized query: replaced nested subqueries with ${deletedContacts.size} cached deleted contacts`,
-    );
+    if (deletedContacts.size > 0) {
+      this.logger.debug(
+        `Optimized query: replaced nested subqueries with ${deletedContacts.size} cached deleted contacts`,
+      );
+    }
 
     return optimizedQuery;
   }
