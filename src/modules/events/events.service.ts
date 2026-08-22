@@ -1,4 +1,9 @@
 import { Injectable, BadRequestException } from '@nestjs/common';
+import { EventEmitter2 } from '@nestjs/event-emitter';
+import {
+  CONTACT_DELETED_INGESTED_EVENT,
+  DELETED_CONTACT_EVENT_NAMES,
+} from '../segments/queries/contact-event-names';
 import {
   TrackEventDto,
   IdentifyEventDto,
@@ -15,7 +20,10 @@ import { CustomLoggerService } from 'src/common/services/custom-logger.service';
 export class EventsService {
   private readonly logger = new CustomLoggerService(EventsService.name);
 
-  constructor(private processingService: ProcessingService) {}
+  constructor(
+    private processingService: ProcessingService,
+    private readonly eventEmitter: EventEmitter2,
+  ) {}
 
   async trackEvent(
     dto: TrackEventDto,
@@ -77,6 +85,16 @@ export class EventsService {
 
     if (result.status === 'error') {
       throw new BadRequestException(result.error);
+    }
+
+    if (
+      (DELETED_CONTACT_EVENT_NAMES as readonly string[]).includes(
+        eventData.eventName ?? '',
+      )
+    ) {
+      this.eventEmitter.emit(CONTACT_DELETED_INGESTED_EVENT, {
+        contactId: dto.contactId,
+      });
     }
 
     return { messageId: result.messageId, status: result.status };
