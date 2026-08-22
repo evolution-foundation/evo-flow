@@ -18,7 +18,7 @@ export const LABEL_REMOVED_EVENT_NAMES = [
 ] as const;
 
 export function sqlStringList(names: readonly string[]): string {
-  return names.map((n) => `'${n}'`).join(', ');
+  return names.map((n) => `'${n.replace(/'/g, "''")}'`).join(', ');
 }
 
 /**
@@ -39,11 +39,14 @@ function escapeRegExp(s: string): string {
  * Matches the deleted-contacts CASE branch the builder emits, whitespace-tolerant.
  * Group 1 is the branch's result literal, which differs per node type and must be
  * preserved by any rewrite (see `applyDeletedContactsOptimization`).
+ * A fresh instance per call: a shared /g regex carries `lastIndex` between callers.
  */
-export const DELETED_CONTACTS_CASE_BRANCH_REGEX = new RegExp(
-  `WHEN contact_or_anonymous_id IN \\(\\s*${escapeRegExp(DELETED_CONTACTS_SUBQUERY)}\\s*\\) THEN '([^']*)'`,
-  'g',
-);
+export function deletedContactsCaseBranchRegex(): RegExp {
+  return new RegExp(
+    `WHEN contact_or_anonymous_id IN \\(\\s*${escapeRegExp(DELETED_CONTACTS_SUBQUERY)}\\s*\\) THEN '([^']*)'`,
+    'g',
+  );
+}
 
 /**
  * In-process signal emitted by the events API when a deleted-contact event is ingested,
@@ -72,7 +75,7 @@ export function applyDeletedContactsOptimization(
   // non-empty literal puts the contact back in the segment. A replacer function is used so
   // `$` inside an id is not read as a capture reference.
   return query.replace(
-    DELETED_CONTACTS_CASE_BRANCH_REGEX,
+    deletedContactsCaseBranchRegex(),
     (_match, sentinel: string) =>
       `WHEN contact_or_anonymous_id IN (${list}) THEN '${sentinel}'`,
   );

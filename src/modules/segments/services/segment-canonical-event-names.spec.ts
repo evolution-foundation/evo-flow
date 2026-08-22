@@ -2,7 +2,7 @@ import { SegmentClickHouseQueryBuilderService } from './segment-clickhouse-query
 import { SegmentNodeType } from '../entities/segment.entity';
 import {
   applyDeletedContactsOptimization,
-  DELETED_CONTACTS_CASE_BRANCH_REGEX,
+  deletedContactsCaseBranchRegex,
   DELETED_CONTACTS_SUBQUERY,
 } from '../queries/contact-event-names';
 import { DeletedContactsCacheService } from './deleted-contacts-cache.service';
@@ -127,7 +127,7 @@ describe('CRM-215 segment SQL matches the canonical contact event names', () => 
     const [subQuery] = builder.segmentNodeToStateSubQuery(segment, node);
 
     const rewritten = String(subQuery.argMaxValue).replace(
-      DELETED_CONTACTS_CASE_BRANCH_REGEX,
+      deletedContactsCaseBranchRegex(),
       `WHEN 1=0 THEN 'false'`,
     );
 
