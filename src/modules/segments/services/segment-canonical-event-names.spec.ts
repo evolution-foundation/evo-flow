@@ -62,6 +62,27 @@ describe('CRM-215 segment SQL matches the canonical contact event names', () => 
     );
   });
 
+  // Definitions saved by the old editor hold the title; the event carries both traits,
+  // so both spellings must match and no backfill is needed.
+  it.each(['has', 'not_has'])(
+    'Label %s: matches the stored value against labelId OR labelName',
+    (condition) => {
+      const node = {
+        id: 'n1',
+        type: SegmentNodeType.Label,
+        labelId: 'VIP',
+        condition,
+      } as any;
+
+      const [subQuery] = builder.segmentNodeToStateSubQuery(segment, node);
+      const sql = `${subQuery.condition} ${subQuery.argMaxValue}`;
+
+      expect(sql).toContain(
+        "(JSONExtractString(traits, 'labelId') = 'VIP' OR JSONExtractString(traits, 'labelName') = 'VIP')",
+      );
+    },
+  );
+
   it('every deleted-contacts guard matches contact.deleted (and the legacy spelling)', () => {
     const nodes = [
       {

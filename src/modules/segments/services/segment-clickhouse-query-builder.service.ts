@@ -645,6 +645,12 @@ export class SegmentClickHouseQueryBuilderService {
         const labelId = this.escapeSql(labelNode.labelId);
         const LABEL_ADDED_IN = sqlStringList(LABEL_ADDED_EVENT_NAMES);
         const LABEL_EVENTS_IN = sqlStringList([...LABEL_ADDED_EVENT_NAMES, ...LABEL_REMOVED_EVENT_NAMES]);
+        // Definitions saved by the old editor hold the label TITLE instead of its id, and
+        // there is no backfill. Every contact.label.* event carries both in traits, so
+        // match either — a stored title keeps working without reopening the segment (CRM-215).
+        const LABEL_MATCH =
+          `(JSONExtractString(traits, 'labelId') = '${labelId}'` +
+          ` OR JSONExtractString(traits, 'labelName') = '${labelId}')`;
 
         switch (labelNode.condition) {
           case 'has':
@@ -652,7 +658,7 @@ export class SegmentClickHouseQueryBuilderService {
             return [
               {
                 stateId,
-                condition: `event_name IN (${LABEL_EVENTS_IN}) AND JSONExtractString(traits, 'labelId') = '${labelId}'`,
+                condition: `event_name IN (${LABEL_EVENTS_IN}) AND ${LABEL_MATCH}`,
                 argMaxValue: `
                   CASE
                     WHEN contact_or_anonymous_id IN (
@@ -692,7 +698,7 @@ export class SegmentClickHouseQueryBuilderService {
                       SELECT DISTINCT contact_or_anonymous_id
                       FROM contact_events
                       WHERE event_name IN (${LABEL_EVENTS_IN})
-                        AND JSONExtractString(traits, 'labelId') = '${labelId}'
+                        AND ${LABEL_MATCH}
                       GROUP BY contact_or_anonymous_id
                       HAVING argMax(if(event_name IN (${LABEL_ADDED_IN}), 'true', 'false'), occurred_at) = 'true'
                     ) THEN 'false'
