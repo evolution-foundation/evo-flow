@@ -281,6 +281,22 @@ export class JourneyTriggerProcessor implements OnModuleInit, OnModuleDestroy {
         `🔍 Analyzing event for journey triggers: ${event.eventName}`,
       );
 
+      // Sessions, the re-entry guard and the dedup claim are all keyed by
+      // contact: a contact-less event can only dispatch a workflow nobody can
+      // act on, and collapses every such event onto the same cache key. The
+      // e-mail deliverability rows on this bus carry an empty contact_id.
+      if (!event.contactId || event.contactId.trim() === '') {
+        this.logger.warn(
+          `⏭️  Skipping event ${event.eventName} — no contactId, nothing contact-scoped can run`,
+          {
+            messageId: event.messageId,
+            eventName: event.eventName,
+            anonymousId: event.anonymousId,
+          },
+        );
+        return;
+      }
+
       // 1. First, check if event satisfies any waiting sessions
       await this.checkWaitingSessions(event);
 

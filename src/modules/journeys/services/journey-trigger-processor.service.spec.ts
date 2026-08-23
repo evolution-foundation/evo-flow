@@ -370,3 +370,77 @@ describe('JourneyTriggerProcessor consumer gating (EVO-1764 A1)', () => {
     expect(warmActiveJourneysCache).not.toHaveBeenCalled();
   });
 });
+
+describe('JourneyTriggerProcessor contact-less events', () => {
+  let processor: JourneyTriggerProcessor;
+  let findActive: jest.Mock;
+  let checkWaitingSessions: jest.Mock;
+  let triggerJourneyExecution: jest.Mock;
+
+  const event = (contactId?: string) =>
+    ({
+      messageId: 'm-1',
+      contactId,
+      eventName: 'webhook.sendgrid',
+      eventType: 'track',
+      properties: '{}',
+      traits: '{}',
+      timestamp: '2026-08-23T00:00:00.000Z',
+    }) as any;
+
+  const analyze = (contactId?: string) =>
+    (processor as any).analyzeEventForJourneyTriggers(event(contactId));
+
+  beforeEach(async () => {
+    findActive = jest.fn().mockResolvedValue([{ id: 'journey-1', name: 'J1' }]);
+    processor = new JourneyTriggerProcessor(
+      { findActive } as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    );
+    ['log', 'warn', 'error'].forEach((m) =>
+      jest
+        .spyOn((processor as any).logger, m)
+        .mockImplementation(() => undefined),
+    );
+    await new Promise((resolve) => setImmediate(resolve));
+
+    checkWaitingSessions = jest.fn().mockResolvedValue(undefined);
+    triggerJourneyExecution = jest.fn().mockResolvedValue(undefined);
+    (processor as any).checkWaitingSessions = checkWaitingSessions;
+    (processor as any).triggerJourneyExecution = triggerJourneyExecution;
+    (processor as any).matchesJourneyTrigger = jest
+      .fn()
+      .mockResolvedValue(true);
+  });
+
+  it.each([
+    ['empty', ''],
+    ['whitespace only', '   '],
+    ['absent', undefined],
+  ])('does not dispatch a workflow when contactId is %s', async (_, id) => {
+    await analyze(id);
+
+    expect(triggerJourneyExecution).not.toHaveBeenCalled();
+    expect(checkWaitingSessions).not.toHaveBeenCalled();
+    expect(findActive).not.toHaveBeenCalled();
+  });
+
+  it('logs the skip instead of dropping the event silently', async () => {
+    await analyze('');
+
+    expect((processor as any).logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining('no contactId'),
+      expect.objectContaining({ eventName: 'webhook.sendgrid' }),
+    );
+  });
+
+  it('still dispatches for an event that carries a contact', async () => {
+    await analyze('contact-1');
+
+    expect(checkWaitingSessions).toHaveBeenCalledTimes(1);
+    expect(triggerJourneyExecution).toHaveBeenCalledTimes(1);
+  });
+});
