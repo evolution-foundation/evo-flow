@@ -19,56 +19,54 @@ export class WebhookTrigger extends BaseTrigger {
     trigger: unknown,
     journey: unknown,
   ): TriggerMatchResult {
-    const config = this.getTriggerConfig(trigger) as { eventName?: string };
-    const node = trigger as { eventName?: string };
-    const targetEventName =
-      config.eventName || node.eventName || JOURNEY_WEBHOOK_EVENT_NAME;
+    const targetEventName = this.resolveTargetEventName(trigger);
 
     if (event.eventName !== targetEventName) {
-      const result: TriggerMatchResult = {
+      return this.decide(event, journey, {
         matches: false,
         reason: `Event name mismatch: ${event.eventName} !== ${targetEventName}`,
         metadata: { eventName: event.eventName, targetEventName },
-      };
-      this.logMatch(event, journey, result);
-      return result;
+      });
     }
 
-    const journeyId = (journey as { id: string }).id;
-    const addressedJourneyId = this.getAddressedJourneyId(event);
-
-    if (addressedJourneyId && addressedJourneyId !== journeyId) {
-      const result: TriggerMatchResult = {
-        matches: false,
-        reason: `Webhook is addressed to journey ${addressedJourneyId}, not ${journeyId}`,
-        metadata: { eventName: event.eventName, addressedJourneyId },
-      };
-      this.logMatch(event, journey, result);
-      return result;
-    }
-
-    const result: TriggerMatchResult = {
+    return this.decide(event, journey, {
       matches: true,
       reason: `Event name matches: ${targetEventName}`,
       metadata: { eventName: event.eventName, targetEventName },
-    };
-    this.logMatch(event, journey, result);
-    return result;
+    });
   }
 
-  private getAddressedJourneyId(event: JourneyTriggerEvent): string | null {
-    try {
-      const properties = JSON.parse(event.properties || '{}') as {
-        journeyId?: string;
-      };
-      return properties.journeyId || null;
-    } catch (error) {
-      this.logger.debug(
-        `Could not read journeyId from event properties: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      );
-      return null;
+  // Same resolution order EventTrigger uses, so both handlers read an identical
+  // node shape identically. A blank configured name counts as unset.
+  private resolveTargetEventName(trigger: unknown): string {
+    const config = this.getTriggerConfig(trigger ?? {}) as {
+      eventName?: string;
+    };
+    const node = (trigger ?? {}) as {
+      eventName?: string;
+      conditions?: { eventName?: string };
+    };
+
+    for (const candidate of [
+      config.eventName,
+      node.eventName,
+      node.conditions?.eventName,
+    ]) {
+      const name = candidate?.trim();
+      if (name) {
+        return name;
+      }
     }
+
+    return JOURNEY_WEBHOOK_EVENT_NAME;
+  }
+
+  private decide(
+    event: JourneyTriggerEvent,
+    journey: unknown,
+    result: TriggerMatchResult,
+  ): TriggerMatchResult {
+    this.logMatch(event, journey, result);
+    return result;
   }
 }
