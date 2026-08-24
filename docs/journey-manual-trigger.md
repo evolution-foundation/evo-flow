@@ -64,3 +64,11 @@ The emitted event uses `eventName: "webhook.journey_trigger"`,
   "processedAt": "2026-06-05T20:36:42.898Z"
 }
 ```
+
+## Why the Webhook trigger node never matches on the event bus
+
+`WebhookTrigger` (the handler behind the Webhook trigger node) matches the exact event name `webhook.journey_trigger`, not the `webhook.` prefix — the e-mail deliverability pipeline writes every provider callback to `contact_events` as `webhook.<platform>` (`sendgrid`, `resend`, `ses`, ...) and those share the `journey-triggers` bus, so a prefix match started journeys off unrelated traffic.
+
+In practice the handler matches nothing: this endpoint bypasses trigger matching (see above), so no producer publishes `webhook.journey_trigger` onto the bus. That is expected — the node still works, because the endpoint starts the named journey directly.
+
+Anything that starts publishing `webhook.journey_trigger` onto the bus must address a single journey itself. The matcher is per-journey and has no journey context to compare against (wait conditions are evaluated with an empty journey), so an unaddressed event would start **every** journey holding a Webhook trigger.
