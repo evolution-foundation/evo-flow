@@ -63,8 +63,32 @@ Regression guards for these guarantees live in
 
 ## Webhook entry points: which one actually runs
 
-There is exactly one webhook path into a journey from this service: `POST /api/v1/journeys/trigger/:journeyId` → `JourneysService.processSpecificJourneyWebhookTrigger`. It requires `contact_id` in the payload, targets the named journey directly, and publishes a `webhook.journey_trigger` event.
+There is exactly one webhook path into a journey from this service:
+`POST /api/v1/journeys/trigger/:journeyId` →
+`JourneysService.processSpecificJourneyWebhookTrigger`. It requires
+`contact_id` in the payload and starts the named journey **directly**: the
+`webhook.journey_trigger` event it builds is handed to
+`JourneySessionsService.startJourney` as the workflow's trigger payload. It is
+never published to the `journey-triggers` bus and never goes through trigger
+matching. The full contract — request body, auth, session semantics, and why
+the Webhook trigger node consequently matches nothing on the bus — lives in
+[`docs/journey-manual-trigger.md`](../../../docs/journey-manual-trigger.md);
+keep that file the source of truth rather than restating it here.
 
-`POST /webhooks/*` (the `event-receiver` / `event-process` runners) is a different pipeline and does **not** start journeys by itself: it is the e-mail deliverability path — detect platform, validate signature, enrich, write to ClickHouse `contact_events`. It does not create contacts and does not talk to the CRM.
+`POST /webhooks/*` (the `event-receiver` / `event-process` runners) is the
+e-mail deliverability path: detect platform, validate signature, enrich, write
+to ClickHouse `contact_events`. It does not create contacts, does not talk to
+the CRM, and does not start journeys — but it is not isolated from them.
+`events_to_journey_triggers_mv` forwards **every** `contact_events` row to
+`journey-triggers`, so provider callbacks do land on the journey bus as
+`webhook.<platform>`. Two guards drop them at the far end: the empty
+`contact_id` (`JourneyTriggerProcessor.isDispatchable`, CRM-271) and
+`WebhookTrigger`'s exact-name match on `webhook.journey_trigger` (CRM-256).
+Resolve a real contact for those rows and the name match is the only thing
+left standing between deliverability traffic and every journey holding a
+Webhook trigger.
 
-This note exists because the module used to carry a `processWebhookTrigger` method that built a full `webhook.received` event and never published it anywhere. It was removed; reading it as "webhook ingestion works" cost real analysis time more than once.
+This note exists because the module used to carry a `processWebhookTrigger`
+method that built a full `webhook.received` event and never published it
+anywhere. It was removed; reading it as "webhook ingestion works" cost real
+analysis time more than once.
