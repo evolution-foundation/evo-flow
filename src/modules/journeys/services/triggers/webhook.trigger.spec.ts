@@ -6,15 +6,12 @@ describe('WebhookTrigger', () => {
 
   const journey = { id: 'journey-1' };
 
-  const event = (
-    eventName: string,
-    properties: Record<string, unknown> = {},
-  ): JourneyTriggerEvent => ({
+  const event = (eventName: string): JourneyTriggerEvent => ({
     messageId: 'm1',
     contactId: 'c1',
     eventName,
     eventType: 'track',
-    properties: JSON.stringify(properties),
+    properties: '{}',
     timestamp: '2026-08-23T00:00:00.000Z',
   });
 
@@ -65,58 +62,29 @@ describe('WebhookTrigger', () => {
     });
   });
 
-  describe('target event name resolution', () => {
-    it('honours an eventName configured in metadata', () => {
-      const configured = webhookTrigger({ eventName: 'webhook.sendgrid' });
+  // The editor writes `eventName` onto every trigger node and never clears it
+  // when the type changes, so a node switched from Event to Webhook carries the
+  // old name in all three places a config could be read from.
+  describe('a leftover eventName does not retarget the handler', () => {
+    const switchedFromEventType = {
+      type: 'Webhook',
+      eventName: 'user.signup',
+      conditions: { eventName: 'user.signup' },
+      metadata: { triggerType: 'webhook', eventName: 'user.signup' },
+    };
 
+    it('ignores the leftover name', () => {
       expect(
-        trigger.matches(event('webhook.sendgrid'), configured, journey).matches,
-      ).toBe(true);
-      expect(
-        trigger.matches(event('webhook.journey_trigger'), configured, journey)
+        trigger.matches(event('user.signup'), switchedFromEventType, journey)
           .matches,
       ).toBe(false);
     });
 
-    it('honours an eventName set directly on the node', () => {
-      const node = { type: 'Webhook', eventName: 'webhook.custom' };
-
-      expect(
-        trigger.matches(event('webhook.custom'), node, journey).matches,
-      ).toBe(true);
-    });
-
-    // EventTrigger reads this path too; a handler that ignored it would leave the
-    // node silently never firing.
-    it('honours an eventName under conditions, like EventTrigger does', () => {
-      const node = {
-        type: 'Webhook',
-        conditions: { eventName: 'webhook.custom' },
-      };
-
-      expect(
-        trigger.matches(event('webhook.custom'), node, journey).matches,
-      ).toBe(true);
-    });
-
-    it.each([
-      ['blank', '   '],
-      ['empty', ''],
-    ])('treats a %s configured eventName as unset', (_label, eventName) => {
-      const result = trigger.matches(
-        event('webhook.journey_trigger'),
-        webhookTrigger({ eventName }),
-        journey,
-      );
-
-      expect(result.matches).toBe(true);
-    });
-
-    it('trims a configured eventName', () => {
+    it('still matches the journey trigger event', () => {
       expect(
         trigger.matches(
-          event('webhook.custom'),
-          webhookTrigger({ eventName: '  webhook.custom  ' }),
+          event('webhook.journey_trigger'),
+          switchedFromEventType,
           journey,
         ).matches,
       ).toBe(true);
@@ -127,32 +95,22 @@ describe('WebhookTrigger', () => {
     // journey-trigger-processor.service.ts calls handlers with `{}` as the journey
     // when it evaluates wait conditions; matching must not depend on journey.id.
     it('matches with the empty journey the wait-condition call site passes', () => {
-      const waitConditions = {
-        eventType: 'webhook',
-        eventName: 'webhook.journey_trigger',
-      };
+      const waitConditions = { eventType: 'webhook', webhookUrl: 'https://x' };
 
       expect(
-        trigger.matches(
-          // The manual-trigger emitter always stamps journeyId into properties.
-          event('webhook.journey_trigger', { journeyId: 'journey-9' }),
-          waitConditions,
-          {},
-        ).matches,
+        trigger.matches(event('webhook.journey_trigger'), waitConditions, {})
+          .matches,
       ).toBe(true);
     });
 
     it.each([
       ['null', null],
       ['undefined', undefined],
-    ])(
-      'falls back to the default event name for a %s trigger',
-      (_label, node) => {
-        expect(
-          trigger.matches(event('webhook.journey_trigger'), node, journey)
-            .matches,
-        ).toBe(true);
-      },
-    );
+    ])('matches with a %s trigger', (_label, node) => {
+      expect(
+        trigger.matches(event('webhook.journey_trigger'), node, journey)
+          .matches,
+      ).toBe(true);
+    });
   });
 });

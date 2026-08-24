@@ -14,58 +14,27 @@ export class WebhookTrigger extends BaseTrigger {
     super('Webhook');
   }
 
+  // The target name is fixed, not read off the node: the editor copies
+  // `eventName` onto every trigger node whatever its type, so honouring it here
+  // would let a name left behind by the Event type retarget this handler.
   matches(
     event: JourneyTriggerEvent,
     trigger: unknown,
     journey: unknown,
   ): TriggerMatchResult {
-    const targetEventName = this.resolveTargetEventName(trigger);
+    const matches = event.eventName === JOURNEY_WEBHOOK_EVENT_NAME;
 
-    if (event.eventName !== targetEventName) {
-      return this.decide(event, journey, {
-        matches: false,
-        reason: `Event name mismatch: ${event.eventName} !== ${targetEventName}`,
-        metadata: { eventName: event.eventName, targetEventName },
-      });
-    }
-
-    return this.decide(event, journey, {
-      matches: true,
-      reason: `Event name matches: ${targetEventName}`,
-      metadata: { eventName: event.eventName, targetEventName },
-    });
-  }
-
-  // Same resolution order EventTrigger uses, so both handlers read an identical
-  // node shape identically. A blank configured name counts as unset.
-  private resolveTargetEventName(trigger: unknown): string {
-    const config = this.getTriggerConfig(trigger ?? {}) as {
-      eventName?: string;
-    };
-    const node = (trigger ?? {}) as {
-      eventName?: string;
-      conditions?: { eventName?: string };
+    const result: TriggerMatchResult = {
+      matches,
+      reason: matches
+        ? `Event name matches: ${JOURNEY_WEBHOOK_EVENT_NAME}`
+        : `Event name mismatch: ${event.eventName} !== ${JOURNEY_WEBHOOK_EVENT_NAME}`,
+      metadata: {
+        eventName: event.eventName,
+        targetEventName: JOURNEY_WEBHOOK_EVENT_NAME,
+      },
     };
 
-    for (const candidate of [
-      config.eventName,
-      node.eventName,
-      node.conditions?.eventName,
-    ]) {
-      const name = candidate?.trim();
-      if (name) {
-        return name;
-      }
-    }
-
-    return JOURNEY_WEBHOOK_EVENT_NAME;
-  }
-
-  private decide(
-    event: JourneyTriggerEvent,
-    journey: unknown,
-    result: TriggerMatchResult,
-  ): TriggerMatchResult {
     this.logMatch(event, journey, result);
     return result;
   }

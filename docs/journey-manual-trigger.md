@@ -71,4 +71,6 @@ The emitted event uses `eventName: "webhook.journey_trigger"`,
 
 In practice the handler matches nothing: this endpoint bypasses trigger matching (see above), so no producer publishes `webhook.journey_trigger` onto the bus. That is expected — the node still works, because the endpoint starts the named journey directly.
 
-Anything that starts publishing `webhook.journey_trigger` onto the bus must address a single journey itself. The matcher is per-journey and has no journey context to compare against (wait conditions are evaluated with an empty journey), so an unaddressed event would start **every** journey holding a Webhook trigger.
+The same handler backs the **Wait for event → Webhook** node: the processor routes wait conditions by their `eventType` and evaluates them with an empty journey. That wait config carries no event name either, so it is satisfied by `webhook.journey_trigger` alone — which means, today, by nothing. Such a session leaves the wait only through its fallback, and an `event` wait has one only when `enableFallback` is set — otherwise it waits indefinitely.
+
+Anything that starts publishing `webhook.journey_trigger` onto the bus must address a single journey itself. The matcher is per-journey and has no journey context to compare against, so an unaddressed event would start **every** journey holding a Webhook trigger.
