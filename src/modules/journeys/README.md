@@ -63,7 +63,7 @@ Regression guards for these guarantees live in
 
 ## Webhook entry points: which one actually runs
 
-There is exactly one webhook path into a journey from this service: `POST /journeys/trigger/:journeyId` → `JourneysService.processSpecificJourneyWebhookTrigger`. It requires `contact_id` in the payload, targets the named journey directly, and publishes a `webhook.journey_trigger` event.
+There is exactly one webhook path into a journey from this service: `POST /api/v1/journeys/trigger/:journeyId` → `JourneysService.processSpecificJourneyWebhookTrigger`. It requires `contact_id` in the payload, targets the named journey directly, and publishes a `webhook.journey_trigger` event.
 
 `POST /webhooks/*` (the `event-receiver` / `event-process` runners) is a different pipeline and does **not** start journeys by itself: it is the e-mail deliverability path — detect platform, validate signature, enrich, write to ClickHouse `contact_events`. It does not create contacts and does not talk to the CRM.
 
