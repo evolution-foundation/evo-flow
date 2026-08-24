@@ -423,14 +423,36 @@ describe('JourneyTriggerProcessor contact-less events', () => {
     expectSkipped();
   });
 
-  it('logs the skip at debug — this is routine traffic, not an anomaly', async () => {
+  // CustomLoggerService.debug is a no-op, so a skip logged there reaches no
+  // console and no file: it has to go out at a level that actually prints.
+  it('logs the skip where it is actually visible, not at warn', async () => {
     await analyze({ contactId: '' });
 
-    expect((processor as any).logger.debug).toHaveBeenCalledWith(
-      expect.stringContaining('no contactId'),
-      expect.objectContaining({ eventName: 'webhook.sendgrid' }),
+    expect((processor as any).logger.log).toHaveBeenCalledWith(
+      expect.stringContaining('webhook.sendgrid — no contactId'),
+      expect.objectContaining({ messageId: 'm-1' }),
     );
+    expect((processor as any).logger.debug).not.toHaveBeenCalled();
     expect((processor as any).logger.warn).not.toHaveBeenCalled();
+  });
+
+  it('names a nameless event instead of printing undefined', async () => {
+    await analyze({ eventName: '' });
+
+    expect((processor as any).logger.log).toHaveBeenCalledWith(
+      expect.stringContaining('<unnamed> — no eventName'),
+      expect.anything(),
+    );
+  });
+
+  // The guard sits ahead of it, so a skipped event must not announce an
+  // analysis that never runs.
+  it('skips before announcing the analysis', async () => {
+    await analyze({ contactId: '' });
+
+    expect((processor as any).logger.log).not.toHaveBeenCalledWith(
+      expect.stringContaining('Analyzing event for journey triggers'),
+    );
   });
 
   it('reports a running total so the volume stays visible', async () => {
@@ -440,6 +462,25 @@ describe('JourneyTriggerProcessor contact-less events', () => {
 
     expect((processor as any).logger.log).toHaveBeenCalledWith(
       expect.stringContaining('1000 events skipped so far'),
+    );
+  });
+
+  // Below the interval the total never printed, so a restart used to drop it.
+  it('flushes the pending total on shutdown', async () => {
+    await analyze({ contactId: '' });
+
+    await (processor as any).onModuleDestroy();
+
+    expect((processor as any).logger.log).toHaveBeenCalledWith(
+      expect.stringContaining('1 events skipped so far'),
+    );
+  });
+
+  it('stays quiet on shutdown when nothing was skipped', async () => {
+    await (processor as any).onModuleDestroy();
+
+    expect((processor as any).logger.log).not.toHaveBeenCalledWith(
+      expect.stringContaining('events skipped so far'),
     );
   });
 

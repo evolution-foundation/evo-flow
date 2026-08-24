@@ -29,6 +29,7 @@ import {
 } from './triggers';
 
 const SKIPPED_EVENT_LOG_INTERVAL = 1000;
+const UNNAMED_EVENT = '<unnamed>';
 
 export interface JourneyTriggerEvent {
   messageId: string;
@@ -162,6 +163,12 @@ export class JourneyTriggerProcessor implements OnModuleInit, OnModuleDestroy {
   }
 
   async onModuleDestroy() {
+    // The running total only prints every SKIPPED_EVENT_LOG_INTERVAL, so the
+    // remainder would be lost on every restart without this flush.
+    if (this.skippedUndispatchableEvents > 0) {
+      this.logSkippedTotal();
+    }
+
     if (this.consumer) {
       this.logger.log('🔄 Stopping Journey Trigger Processor...');
       await this.consumer.disconnect();
@@ -280,13 +287,13 @@ export class JourneyTriggerProcessor implements OnModuleInit, OnModuleDestroy {
 
   private async analyzeEventForJourneyTriggers(event: JourneyTriggerEvent) {
     try {
-      this.logger.log(
-        `🔍 Analyzing event for journey triggers: ${event.eventName}`,
-      );
-
       if (!this.isDispatchable(event)) {
         return;
       }
+
+      this.logger.log(
+        `🔍 Analyzing event for journey triggers: ${event.eventName}`,
+      );
 
       // 1. First, check if event satisfies any waiting sessions
       await this.checkWaitingSessions(event);
@@ -330,8 +337,8 @@ export class JourneyTriggerProcessor implements OnModuleInit, OnModuleDestroy {
    * a full session-cache scan (getSessionsByContact reads every session, then
    * filters) and can open a session under an empty contact id that every later
    * contact-less event then finds. Deliverability callbacks and anonymous link
-   * clicks arrive without a contact and are the bulk of this bus, so the skip is
-   * routine: debug per event, info only for the running total.
+   * clicks arrive without a contact and are the bulk of this bus, so the skip
+   * also reports a running total.
    */
   private isDispatchable(event: JourneyTriggerEvent): boolean {
     const missing = !event.contactId?.trim()
@@ -346,22 +353,27 @@ export class JourneyTriggerProcessor implements OnModuleInit, OnModuleDestroy {
 
     this.skippedUndispatchableEvents += 1;
 
-    this.logger.debug(
-      `⏭️  Skipping event ${event.eventName} — no ${missing}, nothing contact-scoped can run`,
+    // Deliverability rows carry no messageId either, so anonymousId (the
+    // ingestion id) is often the only handle back to the source event.
+    this.logger.log(
+      `⏭️  Skipping event ${event.eventName?.trim() || UNNAMED_EVENT} — no ${missing}, nothing contact-scoped can run`,
       {
         messageId: event.messageId,
-        eventName: event.eventName,
         anonymousId: event.anonymousId,
       },
     );
 
     if (this.skippedUndispatchableEvents % SKIPPED_EVENT_LOG_INTERVAL === 0) {
-      this.logger.log(
-        `⏭️  ${this.skippedUndispatchableEvents} events skipped so far — no contactId or no eventName`,
-      );
+      this.logSkippedTotal();
     }
 
     return false;
+  }
+
+  private logSkippedTotal(): void {
+    this.logger.log(
+      `⏭️  ${this.skippedUndispatchableEvents} events skipped so far — no contactId or no eventName`,
+    );
   }
 
   private async matchesJourneyTrigger(
