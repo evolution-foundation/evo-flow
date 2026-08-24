@@ -60,6 +60,77 @@ export class SegmentClickHouseQueryBuilderService {
     );
   }
 
+  // CRM-241: an event property can arrive in either column. Contact events are
+  // emitted as `identify`, so the whole payload lands in `traits` and
+  // `properties` stays `{}` (EvoFlow::PayloadBuilder.build_identify never
+  // builds a `properties` key). Reading only `properties` made every
+  // whereProperties filter miss, silently and in both directions: Equals
+  // returned an empty segment, NotEquals let everyone through.
+  //
+  // Prefer `properties`, fall back to `traits` only when the key is absent, so
+  // `track` events — which write `properties` and leave `traits` at `{}` —
+  // produce the exact same SQL they did before.
+  //
+  // JSONHas rather than `!= ''`: a key that is present but empty is a real
+  // answer from the producer. Falling back on it would swap a deliberate empty
+  // value for an unrelated one, and would break NotExists.
+  //
+  // The `if` picks the COLUMN and extracts once, instead of extracting from both
+  // and choosing between the results — two JSON operations per row instead of
+  // three, on a filter that runs over the whole event table.
+  private extractEventProperty(path: unknown): string {
+    const escapedPath = this.escapeSql(path);
+    return (
+      `JSONExtractString(if(JSONHas(properties, '${escapedPath}'), ` +
+      `properties, traits), '${escapedPath}')`
+    );
+  }
+
+  // CRM-241: one event-property filter, for Performed AND LastPerformed. The two
+  // carried DUPLICATED switches that drifted apart: LastPerformed's listed neither
+  // the numeric operators nor NotExists, so `GreaterThan` fell through to `default`
+  // and became EQUALITY — silently, because the SQL stayed valid. A single method
+  // removes the possibility of them diverging again.
+  private buildEventPropertyCondition(prop: any): string {
+    const value = prop?.operator?.value || '';
+    const operator = prop?.operator?.type || 'Equals';
+    const extract = this.extractEventProperty(prop?.path);
+    const escapedValue = this.escapeSql(value);
+    const likeValue = this.escapeLike(value);
+    const numericValue = this.escapeNumeric(value);
+
+    switch (operator) {
+      case 'Equals':
+        return `${extract} = '${escapedValue}'`;
+      case 'NotEquals':
+        return `${extract} != '${escapedValue}'`;
+      case 'Contains':
+        return `${extract} LIKE '%${likeValue}%'`;
+      case 'NotContains':
+        return `${extract} NOT LIKE '%${likeValue}%'`;
+      case 'GreaterThan':
+        return `toFloat64OrNull(${extract}) > ${numericValue}`;
+      case 'GreaterThanOrEqual':
+        return `toFloat64OrNull(${extract}) >= ${numericValue}`;
+      case 'LessThan':
+        return `toFloat64OrNull(${extract}) < ${numericValue}`;
+      case 'LessThanOrEqual':
+        return `toFloat64OrNull(${extract}) <= ${numericValue}`;
+      case 'Exists':
+        return `${extract} != ''`;
+      case 'NotExists':
+        return `${extract} = ''`;
+      default:
+        // An unknown operator still degrades to equality, as before — but it now
+        // says so, instead of degrading in silence.
+        this.logger.warn(
+          `Unknown property operator '${operator}' on path '${prop?.path}'; ` +
+            `falling back to equality.`,
+        );
+        return `${extract} = '${escapedValue}'`;
+    }
+  }
+
   /**
    * Convert segment nodes to state sub-queries using modular builders
    */
@@ -370,40 +441,8 @@ export class SegmentClickHouseQueryBuilderService {
 
         // Adicionar condições de propriedades se houver
         if (performedNode.properties && performedNode.properties.length > 0) {
-          const propertyConditions = performedNode.properties.map(
-            (prop: any) => {
-              const value = prop.operator?.value || '';
-              const operator = prop.operator?.type || 'Equals';
-              const path = this.escapeSql(prop.path);
-              const escapedValue = this.escapeSql(value);
-              const likeValue = this.escapeLike(value);
-              const numericValue = this.escapeNumeric(value);
-
-              switch (operator) {
-                case 'Equals':
-                  return `JSONExtractString(properties, '${path}') = '${escapedValue}'`;
-                case 'NotEquals':
-                  return `JSONExtractString(properties, '${path}') != '${escapedValue}'`;
-                case 'Contains':
-                  return `JSONExtractString(properties, '${path}') LIKE '%${likeValue}%'`;
-                case 'NotContains':
-                  return `JSONExtractString(properties, '${path}') NOT LIKE '%${likeValue}%'`;
-                case 'GreaterThan':
-                  return `toFloat64OrNull(JSONExtractString(properties, '${path}')) > ${numericValue}`;
-                case 'GreaterThanOrEqual':
-                  return `toFloat64OrNull(JSONExtractString(properties, '${path}')) >= ${numericValue}`;
-                case 'LessThan':
-                  return `toFloat64OrNull(JSONExtractString(properties, '${path}')) < ${numericValue}`;
-                case 'LessThanOrEqual':
-                  return `toFloat64OrNull(JSONExtractString(properties, '${path}')) <= ${numericValue}`;
-                case 'Exists':
-                  return `JSONExtractString(properties, '${path}') != ''`;
-                case 'NotExists':
-                  return `JSONExtractString(properties, '${path}') = ''`;
-                default:
-                  return `JSONExtractString(properties, '${path}') = '${escapedValue}'`;
-              }
-            },
+          const propertyConditions = performedNode.properties.map((prop: any) =>
+            this.buildEventPropertyCondition(prop),
           );
 
           condition += ` AND (${propertyConditions.join(' AND ')})`;
@@ -478,28 +517,7 @@ export class SegmentClickHouseQueryBuilderService {
           lastPerformedNode.whereProperties.length > 0
         ) {
           const propertyConditions = lastPerformedNode.whereProperties.map(
-            (prop: any) => {
-              const value = prop.operator?.value || '';
-              const operator = prop.operator?.type || 'Equals';
-              const path = this.escapeSql(prop.path);
-              const escapedValue = this.escapeSql(value);
-              const likeValue = this.escapeLike(value);
-
-              switch (operator) {
-                case 'Equals':
-                  return `JSONExtractString(properties, '${path}') = '${escapedValue}'`;
-                case 'NotEquals':
-                  return `JSONExtractString(properties, '${path}') != '${escapedValue}'`;
-                case 'Contains':
-                  return `JSONExtractString(properties, '${path}') LIKE '%${likeValue}%'`;
-                case 'NotContains':
-                  return `JSONExtractString(properties, '${path}') NOT LIKE '%${likeValue}%'`;
-                case 'Exists':
-                  return `JSONExtractString(properties, '${path}') != ''`;
-                default:
-                  return `JSONExtractString(properties, '${path}') = '${escapedValue}'`;
-              }
-            },
+            (prop: any) => this.buildEventPropertyCondition(prop),
           );
 
           condition += ` AND (${propertyConditions.join(' AND ')})`;
