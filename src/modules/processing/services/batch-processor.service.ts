@@ -10,6 +10,7 @@ import { ClickHouseService } from '../clickhouse/clickhouse.service';
 import { SegmentCircuitBreakerService } from '../../segments/services/segment-circuit-breaker.service';
 import { SegmentMetricsService } from '../../segments/metrics/segment-metrics.service';
 import { SegmentCacheService } from '../../cache/services/segment-cache.service';
+import { SegmentQueryUtils } from '../../segments/utils/segment-query.utils';
 import { AtomicSegmentProcessor } from './atomic-processor.service';
 import { IntelligentDebouncerService } from './intelligent-debouncer.service';
 import { DeadLetterQueueService } from './dead-letter-queue.service';
@@ -719,29 +720,33 @@ export class BatchProcessorService implements OnModuleInit, OnModuleDestroy {
       const node = definition.nodes[0];
 
       if (node.type === 'Performed') {
-        const eventName = node.event || node.value;
+        const eventName = SegmentQueryUtils.sanitizeStringValue(
+          String(node.event || node.value || ''),
+        );
         let logic = `ce.event_name = '${eventName}'`;
 
         // Add property filters
         if (node.properties) {
           for (const prop of node.properties) {
-            logic += ` AND JSONExtractString(ce.properties, '${prop.key}') = '${prop.value}'`;
+            logic += ` AND ${SegmentQueryUtils.buildEventPropertyCondition(prop, 'ce')}`;
           }
         }
 
         // Add time window
         if (node.withinSeconds && node.withinSeconds > 0) {
-          logic += ` AND ce.occurred_at >= now() - INTERVAL ${node.withinSeconds} SECOND`;
+          logic += ` AND ce.occurred_at >= now() - INTERVAL ${SegmentQueryUtils.sanitizeNumericValue(node.withinSeconds)} SECOND`;
         }
 
         return logic;
       }
 
       if (node.type === 'Label') {
-        const labelId = node.labelId || node.value;
+        const labelId = SegmentQueryUtils.sanitizeStringValue(
+          String(node.labelId || node.value || ''),
+        );
         return `EXISTS(
-          SELECT 1 FROM contact_labels cl 
-          WHERE cl.contact_id = ce.contact_or_anonymous_id 
+          SELECT 1 FROM contact_labels cl
+          WHERE cl.contact_id = ce.contact_or_anonymous_id
           AND cl.label_id = '${labelId}'
         )`;
       }

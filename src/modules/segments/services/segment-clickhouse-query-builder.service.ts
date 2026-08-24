@@ -45,90 +45,28 @@ export class SegmentClickHouseQueryBuilderService {
     return SegmentQueryUtils.sanitizeStringValue(String(value ?? ''));
   }
 
-  // Non-finite input becomes the literal `null` instead of raw text, so an
-  // unquoted numeric comparison can't be used to splice in arbitrary SQL.
   private escapeNumeric(value: unknown): string {
-    const num = Number(value);
-    return Number.isFinite(num) ? String(num) : 'null';
+    return SegmentQueryUtils.sanitizeNumericValue(value);
   }
 
-  // LIKE patterns treat %, _ and \ specially; escape them so a user value
-  // only ever matches itself as a substring.
   private escapeLike(value: unknown): string {
-    return this.escapeSql(
-      String(value ?? '').replace(/[\\%_]/g, (ch) => `\\${ch}`),
-    );
+    return SegmentQueryUtils.sanitizeLikeValue(value);
   }
 
-  // CRM-241: an event property can arrive in either column. Contact events are
-  // emitted as `identify`, so the whole payload lands in `traits` and
-  // `properties` stays `{}` (EvoFlow::PayloadBuilder.build_identify never
-  // builds a `properties` key). Reading only `properties` made every
-  // whereProperties filter miss, silently and in both directions: Equals
-  // returned an empty segment, NotEquals let everyone through.
-  //
-  // Prefer `properties`, fall back to `traits` only when the key is absent, so
-  // `track` events — which write `properties` and leave `traits` at `{}` —
-  // produce the exact same SQL they did before.
-  //
-  // JSONHas rather than `!= ''`: a key that is present but empty is a real
-  // answer from the producer. Falling back on it would swap a deliberate empty
-  // value for an unrelated one, and would break NotExists.
-  //
-  // The `if` picks the COLUMN and extracts once, instead of extracting from both
-  // and choosing between the results — two JSON operations per row instead of
-  // three, on a filter that runs over the whole event table.
-  private extractEventProperty(path: unknown): string {
-    const escapedPath = this.escapeSql(path);
-    return (
-      `JSONExtractString(if(JSONHas(properties, '${escapedPath}'), ` +
-      `properties, traits), '${escapedPath}')`
-    );
-  }
-
-  // CRM-241: one event-property filter, for Performed AND LastPerformed. The two
-  // carried DUPLICATED switches that drifted apart: LastPerformed's listed neither
-  // the numeric operators nor NotExists, so `GreaterThan` fell through to `default`
-  // and became EQUALITY — silently, because the SQL stayed valid. A single method
-  // removes the possibility of them diverging again.
+  // CRM-241: one event-property filter, for Performed AND LastPerformed, shared
+  // with the real-time processors that carried their own drifted copies. It picks
+  // the column at query time because contact events are emitted as `identify`,
+  // which fills `traits` and leaves `properties` at `{}`. See SegmentQueryUtils.
   private buildEventPropertyCondition(prop: any): string {
-    const value = prop?.operator?.value || '';
-    const operator = prop?.operator?.type || 'Equals';
-    const extract = this.extractEventProperty(prop?.path);
-    const escapedValue = this.escapeSql(value);
-    const likeValue = this.escapeLike(value);
-    const numericValue = this.escapeNumeric(value);
-
-    switch (operator) {
-      case 'Equals':
-        return `${extract} = '${escapedValue}'`;
-      case 'NotEquals':
-        return `${extract} != '${escapedValue}'`;
-      case 'Contains':
-        return `${extract} LIKE '%${likeValue}%'`;
-      case 'NotContains':
-        return `${extract} NOT LIKE '%${likeValue}%'`;
-      case 'GreaterThan':
-        return `toFloat64OrNull(${extract}) > ${numericValue}`;
-      case 'GreaterThanOrEqual':
-        return `toFloat64OrNull(${extract}) >= ${numericValue}`;
-      case 'LessThan':
-        return `toFloat64OrNull(${extract}) < ${numericValue}`;
-      case 'LessThanOrEqual':
-        return `toFloat64OrNull(${extract}) <= ${numericValue}`;
-      case 'Exists':
-        return `${extract} != ''`;
-      case 'NotExists':
-        return `${extract} = ''`;
-      default:
-        // An unknown operator still degrades to equality, as before — but it now
-        // says so, instead of degrading in silence.
+    return SegmentQueryUtils.buildEventPropertyCondition(
+      prop,
+      '',
+      (operator, path) =>
         this.logger.warn(
-          `Unknown property operator '${operator}' on path '${prop?.path}'; ` +
+          `Unknown property operator '${operator}' on path '${path}'; ` +
             `falling back to equality.`,
-        );
-        return `${extract} = '${escapedValue}'`;
-    }
+        ),
+    );
   }
 
   /**

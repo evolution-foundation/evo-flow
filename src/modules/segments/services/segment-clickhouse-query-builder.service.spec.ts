@@ -207,9 +207,9 @@ describe('SegmentClickHouseQueryBuilderService — whereProperties (CRM-241)', (
   });
 
   describe('escaping', () => {
-    // The escaping moved inside the extraction helper; make sure it did not
-    // get dropped on the way. The path is interpolated three times now, so a
-    // regression here would be three injection points instead of one.
+    // The escaping moved into the shared helper; make sure it was not dropped on
+    // the way. The path is interpolated twice now (JSONHas + JSONExtractString),
+    // so a regression here would be two injection points instead of one.
     it('sanitizes a quote in the property path', () => {
       const condition = performed([prop("label'--", 'Equals', 'VIP')]);
 

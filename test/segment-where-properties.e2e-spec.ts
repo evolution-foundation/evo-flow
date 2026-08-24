@@ -20,16 +20,27 @@ import {
  *   - contact event  → arrives as `identify`: payload in `traits`, `properties` = {}
  *   - campaign event → arrives as `track`:    payload in `properties`, `traits` = {}
  *
- * Requires a ClickHouse — and FAILS if none is reachable, instead of skipping.
- * Runs the same on both environments; point the URL at whichever is up:
- *   CLICKHOUSE_URL=http://localhost:18123 npm run test:e2e -- segment-where-properties  # community
- *   CLICKHOUSE_URL=http://localhost:18124 npm run test:e2e -- segment-where-properties  # ecosystem
+ * Opt-in, like test/tenant-isolation.e2e-spec.ts, so `npm run test:e2e` does not
+ * require infrastructure. Once enabled it FAILS if no ClickHouse is reachable,
+ * instead of skipping. The connection comes from the CLICKHOUSE_* variables the
+ * app already uses, so a working .env is enough; override the port for another
+ * environment:
+ *   SEGMENT_E2E=1 npm run test:e2e -- segment-where-properties
+ *   SEGMENT_E2E=1 CLICKHOUSE_PORT=18124 npm run test:e2e -- segment-where-properties
  *
  * The scenario lives in a mirror table the test creates and drops, so nothing is
  * read from or written to the real `contact_events`.
  */
-const URL = process.env.CLICKHOUSE_URL || 'http://localhost:18123';
-const DB = process.env.CLICKHOUSE_DB || 'evo_campaign';
+const ENABLED = process.env.SEGMENT_E2E === '1';
+const describeMaybe = ENABLED ? describe : describe.skip;
+
+const URL =
+  process.env.CLICKHOUSE_URL ||
+  `${process.env.CLICKHOUSE_PROTOCOL || 'http'}://` +
+    `${process.env.CLICKHOUSE_HOST || 'localhost'}:` +
+    `${process.env.CLICKHOUSE_PORT || '8123'}`;
+const DB =
+  process.env.CLICKHOUSE_DATABASE || process.env.CLICKHOUSE_DB || 'evo_campaign';
 const USER = process.env.CLICKHOUSE_USERNAME || 'default';
 const PASS = process.env.CLICKHOUSE_PASSWORD || 'password';
 
@@ -49,15 +60,17 @@ const PASS = process.env.CLICKHOUSE_PASSWORD || 'password';
 // realistically shaped rows, and the copied schema is identical to production's.
 //
 // Verified against ClickHouse 26.7 (community, :18123) and 25.8 (ecosystem, :18124).
-const TABLE = `crm241_e2e_${Date.now()}_${process.pid}`;
+const TABLE_PREFIX = 'crm241_e2e_';
+const TABLE = `${TABLE_PREFIX}${Date.now()}_${process.pid}`;
 const TAG = 'crm241'; // id prefix for the scenario rows, for readability only
 
 const VIP = `${TAG}-vip`;
 const COMUM = `${TAG}-comum`;
 const CAMPANHA = `${TAG}-campanha`;
 
-describe('CRM-241 whereProperties matches real rows in ClickHouse (e2e)', () => {
+describeMaybe('CRM-241 whereProperties matches real rows in ClickHouse (e2e)', () => {
   let client: ClickHouseClient;
+  let mirrorCreated = false;
   const builder = new SegmentClickHouseQueryBuilderService();
   const segment = { id: 'seg-241-e2e' } as Segment;
 
@@ -82,20 +95,32 @@ describe('CRM-241 whereProperties matches real rows in ClickHouse (e2e)', () => 
     try {
       await client.query({ query: 'SELECT 1', format: 'JSONEachRow' });
     } catch (error) {
-      // Fail, do not skip. A conditional skip here would be worse than having no
-      // test at all: the suite would go GREEN without exercising anything — the
-      // same silent-failure mode CRM-241 fixes. (And a flag-driven `it.skip` would
-      // not even work: Jest evaluates that at collection time, before this hook.)
+      // Fail, do not skip. The suite is already opt-in, so a green run here has to
+      // mean the queries really executed — degrading to a skip would reproduce the
+      // silent-failure mode CRM-241 fixes.
       throw new Error(
         `[CRM-241 e2e] ClickHouse unreachable at ${URL} (db=${DB}, user=${USER}): ` +
           `${(error as Error).message}. Bring the compose up, or point ` +
-          `CLICKHOUSE_URL/CLICKHOUSE_USERNAME/CLICKHOUSE_PASSWORD at a live one.`,
+          `CLICKHOUSE_HOST/CLICKHOUSE_PORT at a live one.`,
       );
+    }
+
+    // Sweep mirrors left behind by an interrupted run.
+    const stale = await client.query({
+      query:
+        `SELECT name FROM system.tables WHERE database = {db:String} ` +
+        `AND name LIKE {pattern:String}`,
+      query_params: { db: DB, pattern: `${TABLE_PREFIX}%` },
+      format: 'JSONEachRow',
+    });
+    for (const { name } of await stale.json<{ name: string }>()) {
+      await client.command({ query: `DROP TABLE IF EXISTS ${DB}.${name}` });
     }
 
     await client.command({
       query: `CREATE TABLE ${DB}.${TABLE} AS ${DB}.contact_events`,
     });
+    mirrorCreated = true;
 
     const now = new Date().toISOString().replace('T', ' ').substring(0, 23);
     const row = (
@@ -140,7 +165,12 @@ describe('CRM-241 whereProperties matches real rows in ClickHouse (e2e)', () => 
   }, 120_000);
 
   afterAll(async () => {
-    await client?.command({ query: `DROP TABLE IF EXISTS ${DB}.${TABLE}` });
+    // Only clean up what was created: `createClient` is lazy, so on a failed
+    // connectivity check the client exists and a DROP here would bury the real
+    // error under a second, contextless one.
+    if (mirrorCreated) {
+      await client.command({ query: `DROP TABLE IF EXISTS ${DB}.${TABLE}` });
+    }
     await client?.close();
   });
 
