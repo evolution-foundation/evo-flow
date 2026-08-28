@@ -2,7 +2,7 @@
 
 Defense-in-depth ceiling on redeliveries so a poison message can never block a
 queue/partition indefinitely — independent of whether the application classified
-the error as terminal (that is [EVO-1676](https://linear.app/evoai/issue/EVO-1676)'s
+the error as terminal (that is EVO-1676's
 typed `TerminalError`). Implemented uniformly across both broker adapters via a
 header-based attempt counter; no RabbitMQ quorum-queue migration required.
 
