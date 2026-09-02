@@ -14,6 +14,7 @@ import {
 import { SegmentCircuitBreakerService } from '../../segments/services/segment-circuit-breaker.service';
 import { SegmentMetricsService } from '../../segments/metrics/segment-metrics.service';
 import { SegmentCacheService } from '../../cache/services/segment-cache.service';
+import { SegmentQueryUtils } from '../../segments/utils/segment-query.utils';
 import { CustomLoggerService } from 'src/common/services/custom-logger.service';
 
 export interface EventData {
@@ -597,17 +598,15 @@ export class AtomicSegmentProcessor {
     switch (node.type) {
       case 'Performed':
         const performedNode = node as PerformedSegmentNode;
-        const eventName = performedNode.event;
+        const eventName = SegmentQueryUtils.sanitizeStringValue(
+          String(performedNode.event ?? ''),
+        );
 
-        // Follow EXACT same logic as working batch system in performed-segment-builder.ts
         let condition = `event_name = '${eventName}'`;
 
-        // Add property conditions - follow exact batch logic
         if (performedNode.properties && performedNode.properties.length > 0) {
           const propertyConditions = performedNode.properties
-            .map((prop) => {
-              return `JSONExtractString(properties, '${prop.path}') = '${prop.operator.value}'`;
-            })
+            .map((prop) => SegmentQueryUtils.buildEventPropertyCondition(prop))
             .join(' AND ');
 
           condition = `event_name = '${eventName}' AND (${propertyConditions})`;
@@ -617,7 +616,7 @@ export class AtomicSegmentProcessor {
 
       case 'Label':
         const labelNode = node as LabelSegmentNode;
-        return `JSONExtractString(properties, 'label') ${labelNode.condition === 'has' ? '=' : '!='} '${labelNode.labelId}'`;
+        return `JSONExtractString(properties, 'label') ${labelNode.condition === 'has' ? '=' : '!='} '${SegmentQueryUtils.sanitizeStringValue(String(labelNode.labelId ?? ''))}'`;
 
       case 'Everyone':
         return '1 = 1'; // Always matches
@@ -661,18 +660,19 @@ export class AtomicSegmentProcessor {
     switch (node.type) {
       case 'Performed':
         const performedNode = node as PerformedSegmentNode;
-        const eventName = performedNode.event;
-        const times = performedNode.times || 1;
+        const eventName = SegmentQueryUtils.sanitizeStringValue(
+          String(performedNode.event ?? ''),
+        );
+        const times = SegmentQueryUtils.sanitizeNumericValue(
+          performedNode.times || 1,
+        );
         const operator = this.mapTimesOperator(performedNode.timesOperator);
 
         let condition = `countIf(event_name = '${eventName}') ${operator} ${times}`;
 
-        // Add property conditions
         if (performedNode.properties && performedNode.properties.length > 0) {
           const propertyConditions = performedNode.properties
-            .map((prop) => {
-              return `JSONExtractString(properties, '${prop.path}') = '${prop.operator.value}'`;
-            })
+            .map((prop) => SegmentQueryUtils.buildEventPropertyCondition(prop))
             .join(' AND ');
 
           condition = `countIf(event_name = '${eventName}' AND ${propertyConditions}) ${operator} ${times}`;
@@ -682,7 +682,7 @@ export class AtomicSegmentProcessor {
 
       case 'Label':
         const labelNode = node as LabelSegmentNode;
-        return `JSONExtractString(properties, 'label') ${labelNode.condition === 'has' ? '=' : '!='} '${labelNode.labelId}'`;
+        return `JSONExtractString(properties, 'label') ${labelNode.condition === 'has' ? '=' : '!='} '${SegmentQueryUtils.sanitizeStringValue(String(labelNode.labelId ?? ''))}'`;
 
       case 'Everyone':
         return '1 = 1'; // Always true

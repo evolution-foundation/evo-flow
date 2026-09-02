@@ -28,6 +28,9 @@ import {
   BaseTrigger,
 } from './triggers';
 
+const SKIPPED_EVENT_LOG_INTERVAL = 1000;
+const UNNAMED_EVENT = '<unnamed>';
+
 export interface JourneyTriggerEvent {
   messageId: string;
   contactId: string;
@@ -45,6 +48,7 @@ export class JourneyTriggerProcessor implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new CustomLoggerService(
     JourneyTriggerProcessor.name,
   );
+  private skippedUndispatchableEvents = 0;
   private consumer: Consumer | null = null;
   private kafka: Kafka | null = null;
   private readonly config = getProcessingConfig();
@@ -159,6 +163,12 @@ export class JourneyTriggerProcessor implements OnModuleInit, OnModuleDestroy {
   }
 
   async onModuleDestroy() {
+    // The running total only prints every SKIPPED_EVENT_LOG_INTERVAL, so the
+    // remainder would be lost on every restart without this flush.
+    if (this.skippedUndispatchableEvents > 0) {
+      this.logSkippedTotal();
+    }
+
     if (this.consumer) {
       this.logger.log('🔄 Stopping Journey Trigger Processor...');
       await this.consumer.disconnect();
@@ -277,6 +287,10 @@ export class JourneyTriggerProcessor implements OnModuleInit, OnModuleDestroy {
 
   private async analyzeEventForJourneyTriggers(event: JourneyTriggerEvent) {
     try {
+      if (!this.isDispatchable(event)) {
+        return;
+      }
+
       this.logger.log(
         `🔍 Analyzing event for journey triggers: ${event.eventName}`,
       );
@@ -316,6 +330,50 @@ export class JourneyTriggerProcessor implements OnModuleInit, OnModuleDestroy {
       );
       throw error;
     }
+  }
+
+  /**
+   * Events that can neither start nor resume anything. Letting one through costs
+   * a full session-cache scan (getSessionsByContact reads every session, then
+   * filters) and can open a session under an empty contact id that every later
+   * contact-less event then finds. Deliverability callbacks and anonymous link
+   * clicks arrive without a contact and are the bulk of this bus, so the skip
+   * also reports a running total.
+   */
+  private isDispatchable(event: JourneyTriggerEvent): boolean {
+    const missing = !event.contactId?.trim()
+      ? 'contactId'
+      : !event.eventName?.trim()
+        ? 'eventName'
+        : null;
+
+    if (!missing) {
+      return true;
+    }
+
+    this.skippedUndispatchableEvents += 1;
+
+    // Deliverability rows carry no messageId either, so anonymousId (the
+    // ingestion id) is often the only handle back to the source event.
+    this.logger.log(
+      `⏭️  Skipping event ${event.eventName?.trim() || UNNAMED_EVENT} — no ${missing}, nothing contact-scoped can run`,
+      {
+        messageId: event.messageId,
+        anonymousId: event.anonymousId,
+      },
+    );
+
+    if (this.skippedUndispatchableEvents % SKIPPED_EVENT_LOG_INTERVAL === 0) {
+      this.logSkippedTotal();
+    }
+
+    return false;
+  }
+
+  private logSkippedTotal(): void {
+    this.logger.log(
+      `⏭️  ${this.skippedUndispatchableEvents} events skipped so far — no contactId or no eventName`,
+    );
   }
 
   private async matchesJourneyTrigger(
@@ -672,6 +730,20 @@ export class JourneyTriggerProcessor implements OnModuleInit, OnModuleDestroy {
     event: JourneyTriggerEvent,
     journey: any,
   ): Promise<void> {
+    // Unlike the intake guard above, reaching here without a contact IS an
+    // anomaly: every path into this method is supposed to have filtered already.
+    if (!event.contactId?.trim()) {
+      this.logger.error(
+        '❌ Refusing to dispatch without a contactId — the intake guard was bypassed',
+        {
+          journeyId: journey.id,
+          eventName: event.eventName,
+          messageId: event.messageId,
+        },
+      );
+      return;
+    }
+
     this.logger.log(
       `🚀 Triggering journey execution: ${journey.id} (${journey.name}) for contact ${event.contactId}`,
     );

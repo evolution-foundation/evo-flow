@@ -21,10 +21,12 @@ export const LIFECYCLE_EVENTS = {
   SEGMENT_ENTERED: 'segment_entered',
   SEGMENT_EXITED: 'segment_exited',
   CUSTOM_ATTRIBUTE_CHANGED: 'custom_attribute_changed',
-  // Canonical dotted name actually emitted by the CRM (EVO-1839). Required because
-  // getEventClassification matches by substring, so the dotted form is not covered
-  // by the legacy underscore entry above.
+  // Canonical dotted names actually emitted by the CRM (EVO-1839, CRM-215). Required
+  // because getEventClassification matches by substring, so the dotted forms are not
+  // covered by the legacy underscore entries above — without them the event falls back
+  // to SYSTEM/low priority instead of LIFECYCLE.
   CUSTOM_ATTRIBUTE_CHANGED_DOTTED: 'contact.custom_attribute.changed',
+  CONTACT_DELETED_DOTTED: 'contact.deleted',
 } as const;
 
 // System events

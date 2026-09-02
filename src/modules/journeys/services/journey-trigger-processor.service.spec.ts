@@ -13,31 +13,42 @@ jest.mock(
   { virtual: true },
 );
 
+// The constructor kicks off initializeSingletonCacheService as fire-and-forget.
+// Stubbing it keeps construction synchronous and I/O-free, so a test can install
+// its own cache mock without first waiting a tick for the real one to land.
+const createProcessor = (
+  journeysService: any = {},
+): JourneyTriggerProcessor => {
+  jest
+    .spyOn(
+      JourneyTriggerProcessor.prototype as any,
+      'initializeSingletonCacheService',
+    )
+    .mockResolvedValue(undefined);
+
+  const processor = new JourneyTriggerProcessor(
+    journeysService as any,
+    {} as any,
+    {} as any,
+    {} as any,
+    {} as any,
+  );
+
+  ['log', 'warn', 'error', 'debug'].forEach((method) =>
+    jest
+      .spyOn((processor as any).logger, method)
+      .mockImplementation(() => undefined),
+  );
+
+  return processor;
+};
+
 describe('JourneyTriggerProcessor.checkForActiveOrWaitingSessions (EVO-1691)', () => {
   let processor: JourneyTriggerProcessor;
   let getSessionsByContact: jest.Mock;
 
   beforeEach(async () => {
-    processor = new JourneyTriggerProcessor(
-      {} as any,
-      {} as any,
-      {} as any,
-      {} as any,
-      {} as any,
-    );
-    jest
-      .spyOn((processor as any).logger, 'log')
-      .mockImplementation(() => undefined);
-    jest
-      .spyOn((processor as any).logger, 'warn')
-      .mockImplementation(() => undefined);
-    jest
-      .spyOn((processor as any).logger, 'error')
-      .mockImplementation(() => undefined);
-
-    // Let the fire-and-forget initializeSingletonCacheService settle, then swap
-    // in a controllable cache mock.
-    await new Promise((resolve) => setImmediate(resolve));
+    processor = createProcessor();
     getSessionsByContact = jest.fn();
     (processor as any).sessionCacheService = { getSessionsByContact };
   });
@@ -94,19 +105,7 @@ describe('JourneyTriggerProcessor dispatch fail-fast guard (EVO-1764)', () => {
     (processor as any).triggerJourneyExecution(event, journey);
 
   beforeEach(async () => {
-    processor = new JourneyTriggerProcessor(
-      {} as any,
-      {} as any,
-      {} as any,
-      {} as any,
-      {} as any,
-    );
-    ['log', 'warn', 'error'].forEach((m) =>
-      jest
-        .spyOn((processor as any).logger, m)
-        .mockImplementation(() => undefined),
-    );
-    await new Promise((resolve) => setImmediate(resolve));
+    processor = createProcessor();
 
     handle = {
       firstExecutionRunId: 'run-1',
@@ -205,19 +204,7 @@ describe('JourneyTriggerProcessor messageId idempotency (EVO-1896)', () => {
     (processor as any).triggerJourneyExecution(event, journey);
 
   beforeEach(async () => {
-    processor = new JourneyTriggerProcessor(
-      {} as any,
-      {} as any,
-      {} as any,
-      {} as any,
-      {} as any,
-    );
-    ['log', 'warn', 'error'].forEach((m) =>
-      jest
-        .spyOn((processor as any).logger, m)
-        .mockImplementation(() => undefined),
-    );
-    await new Promise((resolve) => setImmediate(resolve));
+    processor = createProcessor();
 
     workflowStart = jest.fn().mockResolvedValue({
       firstExecutionRunId: 'run-1',
@@ -286,19 +273,7 @@ describe('JourneyTriggerProcessor consumer gating (EVO-1764 A1)', () => {
 
   beforeEach(async () => {
     warmActiveJourneysCache = jest.fn().mockResolvedValue(0);
-    processor = new JourneyTriggerProcessor(
-      { warmActiveJourneysCache } as any,
-      {} as any,
-      {} as any,
-      {} as any,
-      {} as any,
-    );
-    ['log', 'warn', 'error'].forEach((m) =>
-      jest
-        .spyOn((processor as any).logger, m)
-        .mockImplementation(() => undefined),
-    );
-    await new Promise((resolve) => setImmediate(resolve));
+    processor = createProcessor({ warmActiveJourneysCache });
 
     initializeKafkaConsumer = jest.fn().mockResolvedValue(undefined);
     startConsuming = jest.fn().mockResolvedValue(undefined);
@@ -368,5 +343,207 @@ describe('JourneyTriggerProcessor consumer gating (EVO-1764 A1)', () => {
     await processor.onModuleInit();
 
     expect(warmActiveJourneysCache).not.toHaveBeenCalled();
+  });
+});
+
+describe('JourneyTriggerProcessor contact-less events', () => {
+  let processor: JourneyTriggerProcessor;
+  let findActive: jest.Mock;
+  let checkWaitingSessions: jest.Mock;
+  let triggerJourneyExecution: jest.Mock;
+
+  const event = (overrides: Record<string, unknown> = {}) =>
+    ({
+      messageId: 'm-1',
+      contactId: 'contact-1',
+      eventName: 'webhook.sendgrid',
+      eventType: 'track',
+      properties: '{}',
+      traits: '{}',
+      timestamp: '2026-08-23T00:00:00.000Z',
+      ...overrides,
+    }) as any;
+
+  const analyze = (overrides: Record<string, unknown> = {}) =>
+    (processor as any).analyzeEventForJourneyTriggers(event(overrides));
+
+  // Same entry point the Kafka consumer uses, so the guard is exercised where it
+  // actually sits rather than by reaching into the private method.
+  const consume = (overrides: Record<string, unknown> = {}) =>
+    (processor as any).processMessage({
+      topic: 'journey-triggers',
+      partition: 0,
+      message: { value: Buffer.from(JSON.stringify(event(overrides))) },
+    });
+
+  beforeEach(() => {
+    findActive = jest.fn().mockResolvedValue([{ id: 'journey-1', name: 'J1' }]);
+    processor = createProcessor({ findActive });
+
+    checkWaitingSessions = jest.fn().mockResolvedValue(undefined);
+    triggerJourneyExecution = jest.fn().mockResolvedValue(undefined);
+    (processor as any).checkWaitingSessions = checkWaitingSessions;
+    (processor as any).triggerJourneyExecution = triggerJourneyExecution;
+    (processor as any).matchesJourneyTrigger = jest
+      .fn()
+      .mockResolvedValue(true);
+  });
+
+  const expectSkipped = () => {
+    expect(triggerJourneyExecution).not.toHaveBeenCalled();
+    expect(checkWaitingSessions).not.toHaveBeenCalled();
+    expect(findActive).not.toHaveBeenCalled();
+  };
+
+  it.each([
+    ['empty', ''],
+    ['whitespace only', '   '],
+    ['absent', undefined],
+  ])('does not dispatch a workflow when contactId is %s', async (_, id) => {
+    await analyze({ contactId: id });
+
+    expectSkipped();
+  });
+
+  // No handler can match a nameless event: all eight compare eventName against a
+  // concrete string, so letting one through only buys a full session-cache scan.
+  it.each([
+    ['empty', ''],
+    ['whitespace only', '  '],
+    ['absent', undefined],
+  ])('does not dispatch a workflow when eventName is %s', async (_, name) => {
+    await analyze({ eventName: name });
+
+    expectSkipped();
+  });
+
+  it('skips before any lookup when the event arrives from the topic', async () => {
+    await consume({ contactId: '' });
+
+    expectSkipped();
+  });
+
+  // CustomLoggerService.debug is a no-op, so a skip logged there reaches no
+  // console and no file: it has to go out at a level that actually prints.
+  it('logs the skip where it is actually visible, not at warn', async () => {
+    await analyze({ contactId: '' });
+
+    expect((processor as any).logger.log).toHaveBeenCalledWith(
+      expect.stringContaining('webhook.sendgrid — no contactId'),
+      expect.objectContaining({ messageId: 'm-1' }),
+    );
+    expect((processor as any).logger.debug).not.toHaveBeenCalled();
+    expect((processor as any).logger.warn).not.toHaveBeenCalled();
+  });
+
+  it('names a nameless event instead of printing undefined', async () => {
+    await analyze({ eventName: '' });
+
+    expect((processor as any).logger.log).toHaveBeenCalledWith(
+      expect.stringContaining('<unnamed> — no eventName'),
+      expect.anything(),
+    );
+  });
+
+  // The guard sits ahead of it, so a skipped event must not announce an
+  // analysis that never runs.
+  it('skips before announcing the analysis', async () => {
+    await analyze({ contactId: '' });
+
+    expect((processor as any).logger.log).not.toHaveBeenCalledWith(
+      expect.stringContaining('Analyzing event for journey triggers'),
+    );
+  });
+
+  it('reports a running total so the volume stays visible', async () => {
+    for (let i = 0; i < 1000; i++) {
+      await analyze({ contactId: '' });
+    }
+
+    expect((processor as any).logger.log).toHaveBeenCalledWith(
+      expect.stringContaining('1000 events skipped so far'),
+    );
+  });
+
+  // Below the interval the total never printed, so a restart used to drop it.
+  it('flushes the pending total on shutdown', async () => {
+    await analyze({ contactId: '' });
+
+    await (processor as any).onModuleDestroy();
+
+    expect((processor as any).logger.log).toHaveBeenCalledWith(
+      expect.stringContaining('1 events skipped so far'),
+    );
+  });
+
+  it('stays quiet on shutdown when nothing was skipped', async () => {
+    await (processor as any).onModuleDestroy();
+
+    expect((processor as any).logger.log).not.toHaveBeenCalledWith(
+      expect.stringContaining('events skipped so far'),
+    );
+  });
+
+  it('still dispatches for an event that carries a contact', async () => {
+    await analyze();
+
+    expect(checkWaitingSessions).toHaveBeenCalledTimes(1);
+    expect(triggerJourneyExecution).toHaveBeenCalledTimes(1);
+  });
+
+  it('still dispatches an event consumed from the topic', async () => {
+    await consume();
+
+    expect(triggerJourneyExecution).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('JourneyTriggerProcessor dispatch guard for contact-less events', () => {
+  let processor: JourneyTriggerProcessor;
+  let checkForActiveOrWaitingSessions: jest.Mock;
+  let getTemporalClient: jest.Mock;
+
+  const journey = { id: 'journey-1', name: 'J1' };
+
+  const dispatch = (contactId?: string) =>
+    (processor as any).triggerJourneyExecution(
+      {
+        messageId: 'm-1',
+        contactId,
+        eventName: 'evt',
+        eventType: 'track',
+        properties: '{}',
+        timestamp: '2026-08-23T00:00:00.000Z',
+      },
+      journey,
+    );
+
+  beforeEach(() => {
+    processor = createProcessor();
+    checkForActiveOrWaitingSessions = jest.fn().mockResolvedValue(false);
+    getTemporalClient = jest.fn();
+    (processor as any).checkForActiveOrWaitingSessions =
+      checkForActiveOrWaitingSessions;
+    (processor as any).getTemporalClient = getTemporalClient;
+  });
+
+  it.each([
+    ['empty', ''],
+    ['whitespace only', '  '],
+    ['absent', undefined],
+  ])('refuses to dispatch when contactId is %s', async (_, contactId) => {
+    await dispatch(contactId);
+
+    expect(checkForActiveOrWaitingSessions).not.toHaveBeenCalled();
+    expect(getTemporalClient).not.toHaveBeenCalled();
+  });
+
+  it('logs at error — getting here means the intake guard was bypassed', async () => {
+    await dispatch('');
+
+    expect((processor as any).logger.error).toHaveBeenCalledWith(
+      expect.stringContaining('intake guard was bypassed'),
+      expect.objectContaining({ journeyId: 'journey-1' }),
+    );
   });
 });

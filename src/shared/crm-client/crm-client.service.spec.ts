@@ -142,6 +142,49 @@ describe('CrmClientService', () => {
       ).rejects.toBeInstanceOf(BadRequestException);
     });
 
+    // EVO-2203: a refusal on the generic path must read as its reason, not as a
+    // generic "Bad Request Exception". The journey nodes go through executeRequest
+    // instead — covered under "pipeline node path" below.
+    it('surfaces the CRM error message on a 422 envelope, keeping the code', async () => {
+      fetchMock.mockResolvedValueOnce(
+        buildFetchResponse({
+          status: 422,
+          body: {
+            success: false,
+            error: {
+              code: 'PIPELINE_ARCHIVED',
+              message: 'Pipeline is archived and cannot receive conversations',
+            },
+          },
+        }),
+      );
+
+      await expect(
+        service.post('/api/v1/pipelines/p1/pipeline_items', {
+          type: 'conversation',
+        }),
+      ).rejects.toMatchObject({
+        message: 'Pipeline is archived and cannot receive conversations',
+        response: { error: { code: 'PIPELINE_ARCHIVED' } },
+      });
+    });
+
+    // Controllers that answer outside the envelope helper put the reason in a
+    // top-level `message` (render_record_invalid's fallback). Lifting the envelope
+    // reason must not overwrite it with the placeholder.
+    it('keeps a top-level message on a 422 body with no error envelope', async () => {
+      fetchMock.mockResolvedValueOnce(
+        buildFetchResponse({
+          status: 422,
+          body: { message: 'Email is invalid', attributes: ['email'] },
+        }),
+      );
+
+      await expect(service.post('/api/v1/contacts', {})).rejects.toMatchObject({
+        message: 'Email is invalid',
+      });
+    });
+
     it('throws ServiceUnavailableException on 5xx after exhausting retries', async () => {
       fetchMock.mockResolvedValue(
         buildFetchResponse({ status: 500, body: { error: 'boom' } }),
@@ -254,6 +297,59 @@ describe('CrmClientService', () => {
     });
   });
 
+  // EVO-2203: the three pipeline nodes reach the CRM through executeRequest, not
+  // through the generic path above. This is where an archived-pipeline refusal has
+  // to become a readable reason — the node copies this string into its error result.
+  describe('pipeline node path — archived-pipeline refusal', () => {
+    const archivedEnvelope = {
+      success: false,
+      error: {
+        code: 'PIPELINE_ARCHIVED',
+        message: 'Pipeline is archived and cannot receive conversations',
+      },
+      meta: { timestamp: '2026-07-24T00:00:00Z' },
+    };
+
+    it('addToPipeline reports the code and the reason, without the raw envelope', async () => {
+      fetchMock.mockResolvedValue(
+        buildFetchResponse({ status: 422, body: archivedEnvelope }),
+      );
+
+      const result = await service.addToPipeline('p1', 'conv-1', 'st1');
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe(
+        'CRM Validation error: PIPELINE_ARCHIVED: Pipeline is archived and cannot receive conversations',
+      );
+      // A refusal is final: retrying it would just archive-reject three times.
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('moveToPipelineStage reports the same refusal', async () => {
+      fetchMock.mockResolvedValue(
+        buildFetchResponse({ status: 422, body: archivedEnvelope }),
+      );
+
+      const result = await service.moveToPipelineStage('p1', 'conv-1', 'st9');
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe(
+        'CRM Validation error: PIPELINE_ARCHIVED: Pipeline is archived and cannot receive conversations',
+      );
+    });
+
+    it('falls back to the raw body when a 422 is not the CRM envelope', async () => {
+      fetchMock.mockResolvedValue(
+        buildFetchResponse({ status: 422, body: 'plain text failure' }),
+      );
+
+      const result = await service.addToPipeline('p1', 'conv-1');
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('CRM Validation error: plain text failure');
+    });
+  });
+
   // EVO-1273: pins the HTTP contract the Journey "Create Pipeline Task" node
   // depends on (URL, method, body and the nested envelope).
   describe('createPipelineTask — Journey create-task node contract', () => {
@@ -284,6 +380,32 @@ describe('CrmClientService', () => {
       });
       expect(result.success).toBe(true);
       expect(result.data.data.task_id).toBe('task-1');
+    });
+  });
+
+  // CRM-209: pins the flat-endpoint URL the Journey/Campaign template node depends
+  // on — node specs mock this client, so only this test catches a URL drift.
+  describe('getInboxMessageTemplates — Journey/Campaign template node contract', () => {
+    it('GETs the flat /message_templates?inbox_id=... endpoint, not the removed nested route', async () => {
+      fetchMock.mockResolvedValueOnce(
+        buildFetchResponse({
+          status: 200,
+          body: { success: true, data: [{ id: 'tpl-1', name: 'welcome' }] },
+        }),
+      );
+
+      const result = await service.getInboxMessageTemplates('inbox-1');
+
+      const [url, init] = fetchMock.mock.calls[0];
+      expect(url).toBe(
+        'http://crm-test.local/api/v1/message_templates?inbox_id=inbox-1&active=true&per_page=-1',
+      );
+      expect(init.method).toBe('GET');
+      // Guard against the removed EVO-1716 nested route re-appearing.
+      expect(url).not.toContain('/inboxes/inbox-1/message_templates');
+      // Envelope: templates land under data (data.data at the node); resolveTemplate reads it.
+      expect(result.success).toBe(true);
+      expect(result.data.data[0].id).toBe('tpl-1');
     });
   });
 

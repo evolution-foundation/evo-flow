@@ -1,4 +1,9 @@
 import { Injectable } from '@nestjs/common';
+import { OnEvent } from '@nestjs/event-emitter';
+import {
+  CONTACT_DELETED_INGESTED_EVENT,
+  DELETED_CONTACTS_SUBQUERY,
+} from '../queries/contact-event-names';
 import { ClickHouseService } from '../../processing/clickhouse/clickhouse.service';
 import { CustomLoggerService } from 'src/common/services/custom-logger.service';
 
@@ -11,13 +16,19 @@ export class DeletedContactsCacheService {
   private cached: Set<string> | null = null;
   private expiresAt: number = 0;
   private readonly CACHE_TTL = 300000; // 5 minutes
+  // Ingest → Kafka → ClickHouse MV is async: a fetch right after the deleted-contact
+  // signal may not see the row yet and would re-cache a stale set for CACHE_TTL. During
+  // this window every call queries ClickHouse and nothing is cached (CRM-215).
+  private readonly BYPASS_AFTER_DELETE_MS = 15000;
+  private bypassCacheUntil = 0;
 
   constructor(private readonly clickhouseService: ClickHouseService) {}
 
   async getDeletedContacts(): Promise<Set<string>> {
     const now = Date.now();
+    const bypass = now < this.bypassCacheUntil;
 
-    if (this.cached && now < this.expiresAt) {
+    if (!bypass && this.cached && now < this.expiresAt) {
       this.logger.debug('Deleted contacts cache hit');
       return this.cached;
     }
@@ -27,7 +38,8 @@ export class DeletedContactsCacheService {
     try {
       const deletedContacts = await this.fetchDeletedContactsFromClickHouse();
       this.cached = deletedContacts;
-      this.expiresAt = now + this.CACHE_TTL;
+      // A set fetched inside the bypass window may be incomplete: let it expire with the window.
+      this.expiresAt = bypass ? this.bypassCacheUntil : now + this.CACHE_TTL;
       this.logger.debug(`Cached ${deletedContacts.size} deleted contacts`);
       return deletedContacts;
     } catch (error) {
@@ -41,13 +53,7 @@ export class DeletedContactsCacheService {
   }
 
   private async fetchDeletedContactsFromClickHouse(): Promise<Set<string>> {
-    const query = `
-      SELECT DISTINCT contact_or_anonymous_id
-      FROM contact_events
-      WHERE event_name = 'contact_deleted'
-      GROUP BY contact_or_anonymous_id
-      HAVING argMax(occurred_at, occurred_at) > 0
-    `;
+    const query = DELETED_CONTACTS_SUBQUERY;
 
     const result = await this.clickhouseService.query({ query });
 
@@ -59,6 +65,12 @@ export class DeletedContactsCacheService {
     });
 
     return deletedContacts;
+  }
+
+  @OnEvent(CONTACT_DELETED_INGESTED_EVENT)
+  onContactDeletedIngested(): void {
+    this.invalidateCache();
+    this.bypassCacheUntil = Date.now() + this.BYPASS_AFTER_DELETE_MS;
   }
 
   invalidateCache(): void {

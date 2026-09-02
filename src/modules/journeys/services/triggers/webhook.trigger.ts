@@ -2,34 +2,36 @@ import { Injectable } from '@nestjs/common';
 import { BaseTrigger, TriggerMatchResult } from './base.trigger';
 import { JourneyTriggerEvent } from '../journey-trigger-processor.service';
 
+// Name emitted by POST /api/v1/journeys/trigger/:journeyId. Matching the whole
+// `webhook.` prefix is not an option: the e-mail deliverability pipeline writes
+// every provider callback to `contact_events` as `webhook.<platform>`
+// (sendgrid, resend, ses, ...), and those share the journey-trigger bus.
+const JOURNEY_WEBHOOK_EVENT_NAME = 'webhook.journey_trigger';
+
 @Injectable()
 export class WebhookTrigger extends BaseTrigger {
   constructor() {
     super('Webhook');
   }
 
+  // The target name is fixed, not read off the node: the editor copies
+  // `eventName` onto every trigger node whatever its type, so honouring it here
+  // would let a name left behind by the Event type retarget this handler.
   matches(
     event: JourneyTriggerEvent,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unused-vars
-    trigger: any,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    journey: any,
+    trigger: unknown,
+    journey: unknown,
   ): TriggerMatchResult {
-    // For webhook triggers, accept events that start with 'webhook.'
-    const isWebhookEvent = event.eventName.startsWith('webhook.');
-
-    this.logger.debug(
-      `🔍 Webhook trigger check: ${event.eventName} starts with 'webhook.' = ${isWebhookEvent}`,
-    );
+    const matches = event.eventName === JOURNEY_WEBHOOK_EVENT_NAME;
 
     const result: TriggerMatchResult = {
-      matches: isWebhookEvent,
-      reason: isWebhookEvent
-        ? `Event name starts with 'webhook.': ${event.eventName}`
-        : `Event name does not start with 'webhook.': ${event.eventName}`,
+      matches,
+      reason: matches
+        ? `Event name matches: ${JOURNEY_WEBHOOK_EVENT_NAME}`
+        : `Event name mismatch: ${event.eventName} !== ${JOURNEY_WEBHOOK_EVENT_NAME}`,
       metadata: {
         eventName: event.eventName,
-        isWebhookEvent,
+        targetEventName: JOURNEY_WEBHOOK_EVENT_NAME,
       },
     };
 

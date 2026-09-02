@@ -38,6 +38,29 @@ export abstract class BaseNode {
     return AppDataSource;
   }
 
+  // Throws on a failed read or a missing session; each caller picks its own
+  // degrade policy, since evaluating against {} is safe for conditions but not
+  // for a read-modify-write.
+  protected async readSessionVariables(
+    sessionId: string,
+  ): Promise<Record<string, any>> {
+    const dataSource = await this.initializeDatabase();
+    const { JourneySession } = await import(
+      '../../../journeys/entities/journey-session.entity'
+    );
+    const sessionRepository = dataSource.getRepository(JourneySession);
+
+    const session = await sessionRepository.findOne({
+      where: { id: sessionId },
+    });
+
+    if (!session) {
+      throw new Error(`Journey session ${sessionId} not found`);
+    }
+
+    return session.variables || {};
+  }
+
   protected logNodeStart(nodeId: string, input: any): void {
     // log.info(`Executing ${this.nodeType} node`, {
     //   nodeId,

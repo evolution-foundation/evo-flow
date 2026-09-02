@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { ClickHouseService } from '../../processing/clickhouse/clickhouse.service';
 import { Segment } from '../entities/segment.entity';
 import { DeletedContactsCacheService } from './deleted-contacts-cache.service';
+import { applyDeletedContactsOptimization } from '../queries/contact-event-names';
 import { SegmentMetricsService } from '../metrics/segment-metrics.service';
 import { SegmentClickHouseQueryBuilderService } from './segment-clickhouse-query-builder.service';
 import { CustomLoggerService } from 'src/common/services/custom-logger.service';
@@ -65,6 +66,18 @@ export class SegmentQueryExecutionService {
     }
 
     for (const subQuery of subQueryData) {
+      // Both values come from the user-authored definition: an unmapped
+      // operator or non-numeric times must fail closed (match nothing),
+      // never reach the SQL raw.
+      const countOperator = subQuery.timesOperator
+        ? this.queryBuilder.getClickHouseOperator(subQuery.timesOperator)
+        : null;
+      const expectedTimes = Number(subQuery.expectedTimes);
+      const countComparison =
+        countOperator && Number.isFinite(expectedTimes)
+          ? `event_count ${countOperator} ${expectedTimes}`
+          : '0';
+
       const query =
         subQuery.useCountQuery &&
         subQuery.timesOperator &&
@@ -77,7 +90,7 @@ export class SegmentQueryExecutionService {
               state_id,
               contact_or_anonymous_id,
               argMaxState(
-                CASE WHEN event_count ${this.queryBuilder.getClickHouseOperator(subQuery.timesOperator)} ${subQuery.expectedTimes}
+                CASE WHEN ${countComparison}
                      THEN 'true'
                      ELSE 'false'
                 END,
@@ -161,7 +174,8 @@ export class SegmentQueryExecutionService {
       operation: 'deleted_contacts_cache_lookup',
     });
 
-    const deletedContacts = await this.deletedContactsCache.getDeletedContacts();
+    const deletedContacts =
+      await this.deletedContactsCache.getDeletedContacts();
 
     if (deletedContacts.size > 0) {
       this.metrics.recordCacheHit();
@@ -169,26 +183,17 @@ export class SegmentQueryExecutionService {
       this.metrics.recordCacheMiss();
     }
 
-    if (deletedContacts.size === 0) {
-      return query.replace(
-        /WHEN contact_or_anonymous_id IN \([^)]*SELECT[^)]*contact_deleted[^)]*\) THEN '[^']*'/g,
-        `WHEN 1=0 THEN 'false'`,
+    // An empty set leaves the query untouched: the real subselect stays in place.
+    const optimizedQuery = applyDeletedContactsOptimization(
+      query,
+      deletedContacts,
+    );
+
+    if (deletedContacts.size > 0) {
+      this.logger.debug(
+        `Optimized query: replaced nested subqueries with ${deletedContacts.size} cached deleted contacts`,
       );
     }
-
-    const deletedContactsArray = Array.from(deletedContacts).map(
-      (id) => `'${id}'`,
-    );
-    const deletedContactsList = deletedContactsArray.join(',');
-
-    const optimizedQuery = query.replace(
-      /WHEN contact_or_anonymous_id IN \([^)]*SELECT[^)]*contact_deleted[^)]*\) THEN '[^']*'/g,
-      `WHEN contact_or_anonymous_id IN (${deletedContactsList}) THEN 'false'`,
-    );
-
-    this.logger.debug(
-      `Optimized query: replaced nested subqueries with ${deletedContacts.size} cached deleted contacts`,
-    );
 
     return optimizedQuery;
   }
