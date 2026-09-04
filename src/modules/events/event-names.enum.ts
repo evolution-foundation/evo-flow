@@ -28,6 +28,7 @@ export const EVENT_NAMES = [
   'campaign.message.opened',
   'campaign.message.clicked',
   'pipeline.stage_changed',
+  'purchase.approved',
   'custom',
 ] as const;
 

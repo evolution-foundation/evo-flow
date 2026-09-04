@@ -383,6 +383,44 @@ const ENTRIES: EventCatalogEntry[] = [
       },
     },
   },
+  // CRM-316: an approved purchase captured by the CRM purchase webhook
+  // (POST /api/v1/webhooks/purchases/:provider), emitted with the contact the
+  // CRM resolved. First-class so a journey can start on "bought product X" and
+  // a segment can filter "spent more than Y" — before this the purchase only
+  // travelled buried inside campaign.triggered's custom_fields.
+  {
+    eventName: 'purchase.approved',
+    category: 'purchase',
+    dtoType: 'track',
+    labelPt: 'Compra aprovada',
+    labelEn: 'Purchase approved',
+    description:
+      'A purchase was approved on a payment platform and captured as a lead in the CRM.',
+    schema: {
+      required: {
+        provider: f(
+          'string',
+          'Payment platform key (virtu, hotmart, kiwify, cakto)',
+        ),
+        purchase_id: f('string', 'Purchase/order id on the platform'),
+        pipeline_id: f('uuid'),
+        pipeline_item_id: f('uuid', 'Card that holds the purchase'),
+        source: f('string'),
+      },
+      optional: {
+        product: f('string'),
+        amount: f('number'),
+        currency: f('string'),
+        platform_event: f('string', 'Event name as the platform sent it'),
+        outcome: f('string', 'created | already_in_pipeline'),
+        new_contact: f('boolean', 'Whether the purchase created the contact'),
+        contact_id: f('uuid'),
+        pipeline_name: f('string'),
+        pipeline_stage_id: f('uuid'),
+        pipeline_stage_name: f('string'),
+      },
+    },
+  },
   {
     eventName: 'custom',
     category: 'custom',
@@ -402,6 +440,7 @@ export const EVENT_CATEGORIES: readonly EventCategory[] = [
   'conversation',
   'message',
   'campaign',
+  'purchase',
   'custom',
 ] as const;
 

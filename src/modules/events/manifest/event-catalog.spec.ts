@@ -35,6 +35,28 @@ describe('events manifest catalog', () => {
     expect(custom?.schema.optional).toEqual({});
   });
 
+  // CRM-316: the purchase captured by the CRM webhook is a first-class event,
+  // in its own category, with the fields a journey trigger / segment filters on.
+  it('exposes purchase.approved as a track event in the purchase category', () => {
+    const entry = getEvent('purchase.approved');
+    expect(entry).toBeDefined();
+    expect(entry?.category).toBe('purchase');
+    expect(entry?.dtoType).toBe('track');
+    expect(Object.keys(entry!.schema.required).sort()).toEqual([
+      'pipeline_id',
+      'pipeline_item_id',
+      'provider',
+      'purchase_id',
+      'source',
+    ]);
+    expect(entry?.schema.optional.amount.type).toBe('number');
+    expect(entry?.schema.optional.product.type).toBe('string');
+    expect(EVENT_CATEGORIES).toContain('purchase');
+    expect(getEventsByCategory('purchase').map((e) => e.eventName)).toEqual([
+      'purchase.approved',
+    ]);
+  });
+
   it('returns undefined for an unknown event name', () => {
     expect(getEvent('not.a.real.event')).toBeUndefined();
   });
