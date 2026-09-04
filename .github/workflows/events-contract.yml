@@ -1,0 +1,34 @@
+name: events contract
+
+# Anti-drift guard for the events contract (CRM-316). The event catalog
+# (event-names enum + manifest) is mirrored by the CRM and by the frontend
+# manifest; the schema-validation pipe is what accepts or rejects what the CRM
+# emits. Nothing else ran src/modules/events on CI, so a broken mirror only
+# showed up as 400s in the producer's Sidekiq log.
+#
+# Deterministic and fast: everything is in-process (no broker, no DB).
+
+on:
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - 'src/modules/events/**'
+      - '.github/workflows/events-contract.yml'
+  push:
+    branches: [main, develop]
+    paths:
+      - 'src/modules/events/**'
+      - '.github/workflows/events-contract.yml'
+
+jobs:
+  events-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install dependencies
+        run: npm ci
+      - name: Events catalog + schema pipe specs
+        run: npx jest --runInBand src/modules/events
