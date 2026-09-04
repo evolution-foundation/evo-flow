@@ -383,11 +383,9 @@ const ENTRIES: EventCatalogEntry[] = [
       },
     },
   },
-  // CRM-316: an approved purchase captured by the CRM purchase webhook
-  // (POST /api/v1/webhooks/purchases/:provider), emitted with the contact the
-  // CRM resolved. First-class so a journey can start on "bought product X" and
-  // a segment can filter "spent more than Y" — before this the purchase only
-  // travelled buried inside campaign.triggered's custom_fields.
+  // CRM-316: capture of POST /api/v1/webhooks/purchases/:provider, with the
+  // contact the CRM resolved — a journey starts on "bought X", a segment
+  // filters "spent more than Y".
   {
     eventName: 'purchase.approved',
     category: 'purchase',

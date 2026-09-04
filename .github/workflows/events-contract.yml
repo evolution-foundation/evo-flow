@@ -1,12 +1,9 @@
 name: events contract
 
-# Anti-drift guard for the events contract (CRM-316). The event catalog
-# (event-names enum + manifest) is mirrored by the CRM and by the frontend
-# manifest; the schema-validation pipe is what accepts or rejects what the CRM
-# emits. Nothing else ran src/modules/events on CI, so a broken mirror only
-# showed up as 400s in the producer's Sidekiq log.
-#
-# Deterministic and fast: everything is in-process (no broker, no DB).
+# Anti-drift guard for the events contract (CRM-316): the catalog is mirrored by
+# the CRM and the frontend, and the schema pipe decides what the CRM may emit.
+# Nothing else ran src/modules/events, so a broken mirror only showed up as 400s
+# in the producer's Sidekiq log. In-process: no broker, no DB.
 
 on:
   pull_request:
